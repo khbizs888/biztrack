@@ -30,8 +30,8 @@ export default function App() {
     <div style={{display:'flex',height:'100vh',fontFamily:'system-ui,sans-serif',background:'#f5f5f3'}}>
       <div style={{width:200,background:'#fff',borderRight:'1px solid #e5e5e5',display:'flex',flexDirection:'column',padding:'20px 0'}}>
         <div style={{padding:'0 20px 20px',borderBottom:'1px solid #e5e5e5',marginBottom:8}}>
-          <div style={{fontWeight:600,fontSize:16}}>BizTrack</div>
-          <div style={{fontSize:11,color:'#888',marginTop:2}}>Business Manager</div>
+          <div style={{fontWeight:600,fontSize:16}}>FIOR</div>
+          <div style={{fontSize:11,color:'#888',marginTop:2}}>Business Dashboard</div>
         </div>
         {TABS.map(t=>(
           <div key={t} onClick={()=>setTab(t)} style={{padding:'10px 20px',cursor:'pointer',fontSize:14,color:tab===t?'#111':'#666',background:tab===t?'#f5f5f3':'transparent',fontWeight:tab===t?600:400,borderRight:tab===t?'2px solid #378ADD':'2px solid transparent'}}>{t}</div>
