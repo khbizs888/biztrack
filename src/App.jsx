@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js'
 
 const supabase = createClient('https://alzrtdyayhqspdaaxdla.supabase.co','eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFsenJ0ZHlheWhxc3BkYWF4ZGxhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQxNTAyNzcsImV4cCI6MjA4OTcyNjI3N30.qET8aoQDdbibSYGs1djSwA4p9P_I3rVRuHwGKcVJAO8')
 
-const TABS = ['Dashboard','Fior Package','Orders','Import']
+const TABS = ['Dashboard','Fior Package','Orders','Import','Race Report']
 const EMPTY = {'线上单号':'','Date':'','Name':'','Phone number':'','Package':'','Total Price':'','Fior boxes':'','Channel':'','new/repeat Manual':'','Purchase reason':''}
 
 function BarChart({data,color='#7c6af7'}){
@@ -32,6 +32,7 @@ export default function App() {
   const [saving,setSaving]=useState(false)
   const [importData,setImportData]=useState([])
   const [importHeaders,setImportHeaders]=useState([])
+  const [race,setRace]=useState({date:new Date().toISOString().slice(0,10),acc1:'',acc2:'',acc3:'',messages:'',goalSales:'25000'})
   const [msg,setMsg]=useState('')
   const [chartView,setChartView]=useState('monthly')
 
@@ -126,7 +127,7 @@ export default function App() {
         <div style={{padding:'12px 0',flex:1}}>
           {TABS.map(t=>(
             <div key={t} onClick={()=>setTab(t)} style={{padding:'12px 20px',cursor:'pointer',fontSize:13,color:tab===t?'#fff':'#555',background:tab===t?'#1e1e2e':'transparent',borderLeft:tab===t?'3px solid #7c6af7':'3px solid transparent',display:'flex',alignItems:'center',gap:10}}>
-              <span style={{opacity:tab===t?1:0.4}}>{t==='Dashboard'?'▦':t==='Fior Package'?'◈':t==='Orders'?'◎':'⊞'}</span>{t}
+              <span style={{opacity:tab===t?1:0.4}}>{t==='Dashboard'?'▦':t==='Fior Package'?'◈':t==='Orders'?'◎':t==='Import'?'⊞':'◉'}</span>{t}
             </div>
           ))}
         </div>
@@ -221,6 +222,130 @@ export default function App() {
           )}
           {tab==='Fior Package'&&(loading?<div style={{color:'#555'}}>Loading...</div>:<PTable data={pkgs}/>)}
           {tab==='Orders'&&(loading?<div style={{color:'#555'}}>Loading...</div>:<OTable data={orders}/>)}
+          {tab==='Race Report'&&(()=>{
+            const sst=1.16
+            const acc1=parseFloat(race.acc1)||0
+            const acc2=parseFloat(race.acc2)||0
+            const acc3=parseFloat(race.acc3)||0
+            const fbCostBefore=acc1+acc2+acc3
+            const fbCostAfterTax=fbCostBefore*sst
+            const msgs=parseFloat(race.messages)||0
+            const goalSales=parseFloat(race.goalSales)||0
+            const todayOrders=orders.filter(o=>o['Date']===race.date.split('-').reverse().join('/'))
+            const fbNewOrders=todayOrders.filter(o=>o['Channel']&&o['Channel'].includes('FB')&&o['new/repeat Manual']?.toLowerCase()==='new')
+            const fbRepeatOrders=todayOrders.filter(o=>o['Channel']&&o['Channel'].includes('FB')&&o['new/repeat Manual']?.toLowerCase()==='repeat')
+            const fbNewSales=fbNewOrders.reduce((s,o)=>s+(parseFloat(String(o['Total Price']).replace('RM','').trim())||0),0)
+            const fbRepeatSales=fbRepeatOrders.reduce((s,o)=>s+(parseFloat(String(o['Total Price']).replace('RM','').trim())||0),0)
+            const fbTotalSales=fbNewSales+fbRepeatSales
+            const fbRoas=fbCostAfterTax>0?fbTotalSales/fbCostAfterTax:0
+            const totalNewOrders=todayOrders.filter(o=>o['new/repeat Manual']?.toLowerCase()==='new').length
+            const totalRepeatOrders=todayOrders.filter(o=>o['new/repeat Manual']?.toLowerCase()==='repeat').length
+            const totalSales=todayOrders.reduce((s,o)=>s+(parseFloat(String(o['Total Price']).replace('RM','').trim())||0),0)
+            const totalOrders=todayOrders.length
+            const costPerMsg=msgs>0?fbCostAfterTax/msgs:0
+            const costPerPurchase=totalOrders>0?fbCostAfterTax/totalOrders:0
+            const newOrderRate=totalOrders>0?totalNewOrders/totalOrders:0
+            const repeatOrderRate=totalOrders>0?totalRepeatOrders/totalOrders:0
+            const newConvRate=msgs>0?totalNewOrders/msgs:0
+            const repeatConvRate=msgs>0?totalRepeatOrders/msgs:0
+            const totalConvRate=msgs>0?totalOrders/msgs:0
+            const totalRoas=fbCostAfterTax>0?totalSales/fbCostAfterTax:0
+            const accSales=orders.reduce((s,o)=>s+(parseFloat(String(o['Total Price']).replace('RM','').trim())||0),0)
+            const accOrders=orders.length
+            const today=new Date()
+            const daysInMonth=new Date(today.getFullYear(),today.getMonth()+1,0).getDate()
+            const dayOfMonth=today.getDate()
+            const remainingDays=daysInMonth-dayOfMonth
+            const dailyAvg=dayOfMonth>0?accSales/dayOfMonth:0
+            const estMonthSales=dailyAvg*daysInMonth
+            const dailyOptimum=remainingDays>0&&goalSales>accSales?(goalSales-accSales)/remainingDays:0
+
+            const card=(label,value,color='#ccc',sub='')=>(
+              <div style={{background:'#12121a',borderRadius:10,padding:16,border:'1px solid #2a2a35'}}>
+                <div style={{fontSize:11,color:'#555',marginBottom:8,textTransform:'uppercase',letterSpacing:0.8}}>{label}</div>
+                <div style={{fontSize:20,fontWeight:700,color}}>{value}</div>
+                {sub&&<div style={{fontSize:11,color:'#555',marginTop:4}}>{sub}</div>}
+              </div>
+            )
+
+            return(
+              <div>
+                <div style={{background:'#16161d',borderRadius:12,border:'1px solid #2a2a35',padding:20,marginBottom:20}}>
+                  <div style={{fontWeight:600,fontSize:15,color:'#fff',marginBottom:16}}>Daily Input</div>
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:12}}>
+                    {[['Date','date','date'],['FB Acc 1 (RM)','acc1','number'],['FB Acc 2 (RM)','acc2','number'],['FB Acc 3 (RM)','acc3','number'],['Messages','messages','number']].map(([l,k,t])=>(
+                      <div key={k}>
+                        <div style={{fontSize:11,color:'#666',marginBottom:5}}>{l}</div>
+                        <input type={t} value={race[k]} onChange={e=>setRace({...race,[k]:e.target.value})} style={{width:'100%',padding:'9px 12px',background:'#0f0f13',border:'1px solid #2a2a35',borderRadius:8,fontSize:13,color:'#fff',outline:'none',boxSizing:'border-box'}}/>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{marginTop:12,display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12}}>
+                    <div>
+                      <div style={{fontSize:11,color:'#666',marginBottom:5}}>Goal Sales (RM)</div>
+                      <input type='number' value={race.goalSales} onChange={e=>setRace({...race,goalSales:e.target.value})} style={{width:'100%',padding:'9px 12px',background:'#0f0f13',border:'1px solid #2a2a35',borderRadius:8,fontSize:13,color:'#fff',outline:'none',boxSizing:'border-box'}}/>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{fontWeight:600,fontSize:13,color:'#555',marginBottom:12,textTransform:'uppercase',letterSpacing:1}}>FB Ad Cost</div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:20}}>
+                  {card('Acc 1','RM '+acc1.toFixed(2),'#7c6af7')}
+                  {card('Acc 2','RM '+acc2.toFixed(2),'#7c6af7')}
+                  {card('Acc 3','RM '+acc3.toFixed(2),'#7c6af7')}
+                  {card('Total Before SST','RM '+fbCostBefore.toFixed(2),'#f59e0b')}
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:20}}>
+                  {card('Total After SST (16%)','RM '+fbCostAfterTax.toFixed(2),'#f59e0b')}
+                  {card('Messages',msgs,'#22d3ee')}
+                  {card('Cost / Message','RM '+costPerMsg.toFixed(2),'#22d3ee')}
+                  {card('Cost / Purchase','RM '+costPerPurchase.toFixed(2),'#22d3ee')}
+                </div>
+
+                <div style={{fontWeight:600,fontSize:13,color:'#555',marginBottom:12,textTransform:'uppercase',letterSpacing:1}}>Today Orders ({race.date})</div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:20}}>
+                  {card('FB New Orders',fbNewOrders.length,'#34d399')}
+                  {card('FB Repeat Orders',fbRepeatOrders.length,'#34d399')}
+                  {card('FB New Sales','RM '+fbNewSales.toFixed(2),'#34d399')}
+                  {card('FB Repeat Sales','RM '+fbRepeatSales.toFixed(2),'#34d399')}
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:20}}>
+                  {card('FB Total Sales','RM '+fbTotalSales.toFixed(2),'#34d399')}
+                  {card('FB ROAS',fbRoas.toFixed(2),'#34d399',fbRoas>=1?'✓ Profitable':'✗ Below 1x')}
+                  {card('Total Orders',totalOrders,'#ccc')}
+                  {card('Total Sales','RM '+totalSales.toFixed(2),'#22d3ee')}
+                </div>
+
+                <div style={{fontWeight:600,fontSize:13,color:'#555',marginBottom:12,textTransform:'uppercase',letterSpacing:1}}>ROAS & Conversion</div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:20}}>
+                  {card('Total ROAS',totalRoas.toFixed(2),totalRoas>=1?'#34d399':'#f87171')}
+                  {card('New Order Rate',(newOrderRate*100).toFixed(1)+'%','#ccc')}
+                  {card('Repeat Order Rate',(repeatOrderRate*100).toFixed(1)+'%','#ccc')}
+                  {card('Total Conv. Rate',(totalConvRate*100).toFixed(1)+'%','#22d3ee')}
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:20}}>
+                  {card('New Conv. Rate',(newConvRate*100).toFixed(2)+'%','#ccc')}
+                  {card('Repeat Conv. Rate',(repeatConvRate*100).toFixed(2)+'%','#ccc')}
+                  {card('Total New Orders',totalNewOrders,'#7c6af7')}
+                  {card('Total Repeat Orders',totalRepeatOrders,'#7c6af7')}
+                </div>
+
+                <div style={{fontWeight:600,fontSize:13,color:'#555',marginBottom:12,textTransform:'uppercase',letterSpacing:1}}>Goal Tracking</div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:20}}>
+                  {card('Accumulated Sales','RM '+accSales.toLocaleString(),'#22d3ee')}
+                  {card('Accumulated Orders',accOrders,'#ccc')}
+                  {card('Daily Avg Sales','RM '+dailyAvg.toFixed(2),'#ccc')}
+                  {card('Est. Month Sales','RM '+estMonthSales.toLocaleString(undefined,{maximumFractionDigits:0}),'#f59e0b')}
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:20}}>
+                  {card('Goal Sales','RM '+Number(goalSales).toLocaleString(),'#7c6af7')}
+                  {card('Remaining Days',remainingDays,'#ccc')}
+                  {card('Daily Optimum','RM '+dailyOptimum.toFixed(2),dailyOptimum>dailyAvg?'#f87171':'#34d399','needed per day')}
+                  {card('Goal Progress',(goalSales>0?(accSales/goalSales*100):0).toFixed(1)+'%',accSales/goalSales>=1?'#34d399':'#f59e0b')}
+                </div>
+              </div>
+            )
+          })()}
           {tab==='Import'&&(
             <div>
               <div style={{background:'#16161d',borderRadius:12,border:'1px solid #2a2a35',padding:24,marginBottom:20}}>
