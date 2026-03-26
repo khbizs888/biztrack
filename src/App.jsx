@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js'
 
 const supabase = createClient('https://alzrtdyayhqspdaaxdla.supabase.co','eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFsenJ0ZHlheWhxc3BkYWF4ZGxhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQxNTAyNzcsImV4cCI6MjA4OTcyNjI3N30.qET8aoQDdbibSYGs1djSwA4p9P_I3rVRuHwGKcVJAO8')
 
-const TABS = ['Dashboard','Fior Package','Orders']
+const TABS = ['Dashboard','Fior Package','Orders','Import']
 const EMPTY = {'线上单号':'','Date':'','Name':'','Phone number':'','Package':'','Total Price':'','Fior boxes':'','Channel':'','new/repeat Manual':'','Purchase reason':''}
 
 function BarChart({data,color='#7c6af7'}){
@@ -30,6 +30,8 @@ export default function App() {
   const [showForm,setShowForm]=useState(false)
   const [form,setForm]=useState(EMPTY)
   const [saving,setSaving]=useState(false)
+  const [importData,setImportData]=useState([])
+  const [importHeaders,setImportHeaders]=useState([])
   const [msg,setMsg]=useState('')
   const [chartView,setChartView]=useState('monthly')
 
@@ -124,7 +126,7 @@ export default function App() {
         <div style={{padding:'12px 0',flex:1}}>
           {TABS.map(t=>(
             <div key={t} onClick={()=>setTab(t)} style={{padding:'12px 20px',cursor:'pointer',fontSize:13,color:tab===t?'#fff':'#555',background:tab===t?'#1e1e2e':'transparent',borderLeft:tab===t?'3px solid #7c6af7':'3px solid transparent',display:'flex',alignItems:'center',gap:10}}>
-              <span style={{opacity:tab===t?1:0.4}}>{t==='Dashboard'?'▦':t==='Fior Package'?'◈':'◎'}</span>{t}
+              <span style={{opacity:tab===t?1:0.4}}>{t==='Dashboard'?'▦':t==='Fior Package'?'◈':t==='Orders'?'◎':'⊞'}</span>{t}
             </div>
           ))}
         </div>
@@ -137,7 +139,32 @@ export default function App() {
             <div style={{fontWeight:600,fontSize:18,color:'#fff'}}>{tab}</div>
             <div style={{fontSize:11,color:'#555',marginTop:2}}>{new Date().toLocaleDateString('en-MY',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}</div>
           </div>
+          <div style={{display:'flex',gap:10}}>
+          {tab==='Orders'&&<label style={{background:'#1e1e2e',color:'#888',border:'1px solid #2a2a35',borderRadius:8,padding:'9px 18px',cursor:'pointer',fontSize:13}}>
+            Import CSV
+            <input type='file' accept='.csv' style={{display:'none'}} onChange={async e=>{
+              const file=e.target.files[0]
+              if(!file) return
+              const text=await file.text()
+              const lines=text.split('\n').filter(l=>l.trim())
+              const headers=lines[0].split(',').map(h=>h.trim().replace(/^"|"$/g,''))
+              const rows=lines.slice(1).map(line=>{
+                const vals=line.split(',').map(v=>v.trim().replace(/^"|"$/g,''))
+                const obj={}
+                headers.forEach((h,i)=>{obj[h]=vals[i]||''})
+                return obj
+              }).filter(r=>Object.values(r).some(v=>v))
+              if(!rows.length){setMsg('No data found');return}
+              setMsg('Importing '+rows.length+' rows...')
+              const {error}=await supabase.from('2026 Fior Daily order').insert(rows)
+              if(error){setMsg('Error: '+error.message)}
+              else{setMsg('Imported '+rows.length+' orders!');load()}
+              setTimeout(()=>setMsg(''),4000)
+              e.target.value=''
+            }}/>
+          </label>}
           {tab==='Orders'&&<button onClick={()=>setShowForm(true)} style={{background:'#7c6af7',color:'#fff',border:'none',borderRadius:8,padding:'9px 18px',cursor:'pointer',fontSize:13,fontWeight:500}}>+ New Order</button>}
+        </div>
         </div>
 
         {msg&&<div style={{background:msg.includes('Error')?'rgba(162,45,45,0.15)':'rgba(59,109,17,0.15)',color:msg.includes('Error')?'#f87171':'#86efac',padding:'10px 28px',fontSize:13}}>{msg}</div>}
@@ -194,6 +221,63 @@ export default function App() {
           )}
           {tab==='Fior Package'&&(loading?<div style={{color:'#555'}}>Loading...</div>:<PTable data={pkgs}/>)}
           {tab==='Orders'&&(loading?<div style={{color:'#555'}}>Loading...</div>:<OTable data={orders}/>)}
+          {tab==='Import'&&(
+            <div>
+              <div style={{background:'#16161d',borderRadius:12,border:'1px solid #2a2a35',padding:24,marginBottom:20}}>
+                <div style={{fontWeight:600,fontSize:15,color:'#fff',marginBottom:6}}>Import CSV File</div>
+                <div style={{fontSize:12,color:'#555',marginBottom:16}}>Upload your Lark export CSV to view the data here. Nothing will be saved to database.</div>
+                <label style={{display:'inline-block',background:'#7c6af7',color:'#fff',borderRadius:8,padding:'10px 20px',cursor:'pointer',fontSize:13,fontWeight:500}}>
+                  Choose CSV File
+                  <input type='file' accept='.csv' style={{display:'none'}} onChange={async e=>{
+                    const file=e.target.files[0]
+                    if(!file) return
+                    const text=await file.text()
+                    const clean=text.replace(/^\uFEFF/,'')
+                    const lines=clean.split('\n').filter(l=>l.trim())
+                    const parseCSVLine=(line)=>{
+                      const result=[]
+                      let cur=''
+                      let inQuote=false
+                      for(let ch of line){
+                        if(ch==='"'){inQuote=!inQuote}
+                        else if(ch===','&&!inQuote){result.push(cur.trim());cur=''}
+                        else{cur+=ch}
+                      }
+                      result.push(cur.trim())
+                      return result
+                    }
+                    const headers=parseCSVLine(lines[0])
+                    const rows=lines.slice(1).map(line=>{
+                      const vals=parseCSVLine(line)
+                      const obj={}
+                      headers.forEach((h,i)=>{obj[h]=vals[i]||''})
+                      return obj
+                    }).filter(r=>Object.values(r).some(v=>v))
+                    setImportHeaders(headers)
+                    setImportData(rows)
+                    e.target.value=''
+                  }}/>
+                </label>
+                {importData.length>0&&<span style={{marginLeft:16,fontSize:13,color:'#34d399'}}>{importData.length} rows loaded</span>}
+              </div>
+              {importData.length>0&&(
+                <div style={{background:'#16161d',borderRadius:12,border:'1px solid #2a2a35',overflow:'auto'}}>
+                  <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                    <thead>
+                      <tr>{importHeaders.map(h=><th key={h} style={{textAlign:'left',padding:'10px 14px',fontSize:10,fontWeight:600,color:'#555',background:'#12121a',borderBottom:'1px solid #2a2a35',textTransform:'uppercase',letterSpacing:0.8,whiteSpace:'nowrap'}}>{h}</th>)}</tr>
+                    </thead>
+                    <tbody>
+                      {importData.map((row,i)=>(
+                        <tr key={i} style={{borderBottom:i<importData.length-1?'1px solid #1e1e2a':'none'}}>
+                          {importHeaders.map(h=><td key={h} style={{padding:'10px 14px',color:'#ccc',whiteSpace:'nowrap',maxWidth:200,overflow:'hidden',textOverflow:'ellipsis'}}>{row[h]}</td>)}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
