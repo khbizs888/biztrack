@@ -253,7 +253,7 @@ export async function calculateProjectPnL(
     .neq('status', 'cancelled')
 
   if (ordersErr) throw new Error(ordersErr.message)
-  const orders = plain(rawOrders ?? []) as {
+  const orders = plain(rawOrders ?? []) as unknown as {
     id: string
     total_price: string
     package_id: string | null
@@ -282,7 +282,7 @@ export async function calculateProjectPnL(
   const package_breakdown = Object.values(pkgMap).sort((a, b) => b.revenue - a.revenue)
 
   // Product cost: sum (product.cost × quantity) per package, then per order
-  const packageIds = [...new Set(orders.map(o => o.package_id).filter(Boolean))] as string[]
+  const packageIds = Array.from(new Set(orders.map(o => o.package_id).filter(Boolean))) as string[]
   let product_cost = 0
   if (packageIds.length > 0) {
     const { data: rawItems } = await sb
@@ -290,7 +290,7 @@ export async function calculateProjectPnL(
       .select('package_id, quantity, products(cost)')
       .in('package_id', packageIds)
 
-    const items = plain(rawItems ?? []) as {
+    const items = plain(rawItems ?? []) as unknown as {
       package_id: string
       quantity: number
       products: { cost: string } | null

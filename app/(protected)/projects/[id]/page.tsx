@@ -110,7 +110,7 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
 
   function handleDeleteProject() {
     deleteProject(id)
-    toast.success(`Project "${project.name}" deleted`)
+    toast.success(`Project "${project?.name ?? 'Project'}" deleted`)
     router.push('/projects')
   }
 
@@ -118,7 +118,7 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
 
   function handleDeletePackage() {
     if (!deletingPkgId) return
-    const pkg = project.packages.find(p => p.id === deletingPkgId)
+    const pkg = project?.packages.find(p => p.id === deletingPkgId)
     deletePackage(id, deletingPkgId)
     toast.success(`Package "${pkg?.name}" deleted`)
     setDeletingPkgId(null)
