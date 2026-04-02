@@ -4,7 +4,8 @@ const nextConfig = {
     serverActions: {
       allowedOrigins: ['localhost:3000'],
     },
+    serverExternalPackages: ['@supabase/ssr'],
   },
 }
 
-export default nextConfig
+module.exports = nextConfig
