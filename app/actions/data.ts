@@ -1,0 +1,807 @@
+'use server'
+
+import { createAdminClient } from '@/lib/supabase/admin'
+import { createClient } from '@/lib/supabase/server'
+import type {
+  OrderFilters, PaginatedResult, Order,
+  CustomerWithStats, DashboardKPIs, CustomerStatus,
+  PackageAttributeSchema, ProjectPnL, AttributeType,
+} from '@/lib/types'
+
+// ─────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────
+
+function getCustomerStatus(count: number, last: string | null): CustomerStatus {
+  if (!last || count === 0) return 'Churned'
+  const days = Math.floor((Date.now() - new Date(last).getTime()) / 86400000)
+  if (count >= 2 && days <= 90) return 'Active'
+  if (count === 1 && days <= 90) return 'New'
+  if (days <= 180) return 'At Risk'
+  if (days <= 365) return 'Lapsed'
+  return 'Churned'
+}
+
+function plain<T>(v: T): T {
+  return JSON.parse(JSON.stringify(v))
+}
+
+// ─────────────────────────────────────────────
+// READ — Projects
+// ─────────────────────────────────────────────
+
+export async function fetchProjects() {
+  const sb = createAdminClient()
+  const { data, error } = await sb.from('projects').select('*').order('name')
+  if (error) throw new Error(error.message)
+  return plain(data ?? [])
+}
+
+export async function fetchProject(id: string) {
+  const sb = createAdminClient()
+  const { data, error } = await sb.from('projects').select('*').eq('id', id).single()
+  if (error) throw new Error(error.message)
+  return plain(data)
+}
+
+export async function fetchProjectSales(): Promise<Record<string, number>> {
+  const sb = createAdminClient()
+  const { data, error } = await sb
+    .from('orders').select('project_id, total_price').neq('status', 'cancelled')
+  if (error) { console.error(error.message); return {} }
+  const map: Record<string, number> = {}
+  ;(plain(data ?? []) as { project_id: string | null; total_price: string }[])
+    .forEach(o => {
+      if (o.project_id) map[o.project_id] = (map[o.project_id] ?? 0) + Number(o.total_price)
+    })
+  return map
+}
+
+// ─────────────────────────────────────────────
+// READ — Products & Packages
+// ─────────────────────────────────────────────
+
+export async function fetchProducts(projectId: string) {
+  const sb = createAdminClient()
+  const { data, error } = await sb
+    .from('products').select('*').eq('project_id', projectId).order('name')
+  if (error) throw new Error(error.message)
+  return plain(data ?? [])
+}
+
+export async function fetchPackages(projectId: string) {
+  const sb = createAdminClient()
+  const { data, error } = await sb
+    .from('packages').select('*').eq('project_id', projectId).eq('is_active', true).order('sort_order').order('name')
+  if (error) throw new Error(error.message)
+  return plain(data ?? [])
+}
+
+// ─────────────────────────────────────────────
+// READ / WRITE — Package Attribute Schema
+// ─────────────────────────────────────────────
+
+export async function fetchAttributeSchema(projectId: string): Promise<PackageAttributeSchema[]> {
+  const sb = createAdminClient()
+  const { data, error } = await sb
+    .from('package_attributes_schema')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('sort_order')
+    .order('created_at')
+  if (error) throw new Error(error.message)
+  return plain(data ?? [])
+}
+
+export async function createAttributeSchema(payload: {
+  project_id: string
+  attribute_key: string
+  attribute_label: string
+  attribute_type: AttributeType
+  options: string[]
+  is_required: boolean
+  sort_order?: number
+}): Promise<string> {
+  const sb = createAdminClient()
+  const { data, error } = await sb.from('package_attributes_schema').insert({
+    project_id: payload.project_id,
+    attribute_key: payload.attribute_key.toLowerCase().replace(/\s+/g, '_'),
+    attribute_label: payload.attribute_label,
+    attribute_type: payload.attribute_type,
+    options: payload.options,
+    is_required: payload.is_required,
+    sort_order: payload.sort_order ?? 0,
+  }).select('id').single()
+  if (error) throw new Error(error.message)
+  return data.id as string
+}
+
+export async function updateAttributeSchema(id: string, payload: {
+  attribute_label?: string
+  attribute_type?: AttributeType
+  options?: string[]
+  is_required?: boolean
+  sort_order?: number
+}) {
+  const sb = createAdminClient()
+  const { error } = await sb.from('package_attributes_schema').update(payload).eq('id', id)
+  if (error) throw new Error(error.message)
+}
+
+export async function deleteAttributeSchema(id: string) {
+  const sb = createAdminClient()
+  const { error } = await sb.from('package_attributes_schema').delete().eq('id', id)
+  if (error) throw new Error(error.message)
+}
+
+// ─────────────────────────────────────────────
+// READ — Orders (paginated + filtered)
+// ─────────────────────────────────────────────
+
+export async function fetchOrders(filters: OrderFilters = {}): Promise<PaginatedResult<Order>> {
+  const sb = createAdminClient()
+  const { status, projectId, dateFrom, dateTo, search, page = 1, pageSize = 50 } = filters
+
+  let q = sb
+    .from('orders')
+    .select('*, customers(id, name, phone, address), projects(id, name, code), packages(id, name, code)', { count: 'exact' })
+    .order('order_date', { ascending: false })
+    .order('created_at', { ascending: false })
+
+  if (status)    q = q.eq('status', status)
+  if (projectId) q = q.eq('project_id', projectId)
+  if (dateFrom)  q = q.gte('order_date', dateFrom)
+  if (dateTo)    q = q.lte('order_date', dateTo)
+  if (search)    q = q.or(`customers.name.ilike.%${search}%,customers.phone.ilike.%${search}%`)
+
+  const from = (page - 1) * pageSize
+  q = q.range(from, from + pageSize - 1)
+
+  const { data, error, count } = await q
+  if (error) throw new Error(error.message)
+  return { data: plain(data ?? []) as Order[], count: count ?? 0, page, pageSize }
+}
+
+// ─────────────────────────────────────────────
+// READ — Customers (with computed stats)
+// ─────────────────────────────────────────────
+
+export async function fetchCustomers(): Promise<CustomerWithStats[]> {
+  const sb = createAdminClient()
+  const { data, error } = await sb
+    .from('customers')
+    .select('*, orders(total_price, order_date, status, project_id)')
+    .order('created_at', { ascending: false })
+  if (error) throw new Error(error.message)
+
+  return (plain(data ?? []) as any[]).map((c: any) => {
+    const valid = (c.orders ?? []).filter((o: any) => o.status !== 'cancelled')
+    const totalSpend = valid.reduce((s: number, o: any) => s + Number(o.total_price), 0)
+    const sorted = [...valid].sort(
+      (a: any, b: any) => new Date(a.order_date).getTime() - new Date(b.order_date).getTime()
+    )
+    const first = sorted[0]?.order_date ?? null
+    const last  = sorted[sorted.length - 1]?.order_date ?? null
+    return {
+      ...c,
+      order_count: valid.length,
+      total_spend: totalSpend,
+      avg_order_value: valid.length > 0 ? totalSpend / valid.length : 0,
+      first_order_date: first,
+      last_order_date: last,
+      project_ids: Array.from(new Set(valid.map((o: any) => o.project_id).filter(Boolean))),
+      status: getCustomerStatus(valid.length, last),
+    }
+  })
+}
+
+// ─────────────────────────────────────────────
+// READ — Dashboard KPIs
+// ─────────────────────────────────────────────
+
+export async function fetchDashboardKPIs(): Promise<DashboardKPIs> {
+  const sb = createAdminClient()
+  const now = new Date()
+  const from = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]
+  const to   = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0]
+
+  const [{ data: orders }, { count: newCust }] = await Promise.all([
+    sb.from('orders').select('total_price, is_new_customer')
+      .gte('order_date', from).lte('order_date', to).neq('status', 'cancelled'),
+    sb.from('customers').select('id', { count: 'exact', head: true })
+      .gte('created_at', from + 'T00:00:00').lte('created_at', to + 'T23:59:59'),
+  ])
+
+  const safeOrders = plain(orders ?? []) as { total_price: string; is_new_customer: boolean }[]
+  const totalRevenue  = safeOrders.reduce((s, o) => s + Number(o.total_price), 0)
+  const totalOrders   = safeOrders.length
+  const repeatOrders  = safeOrders.filter(o => o.is_new_customer === false).length
+  const avgOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0
+  const netProfit     = totalRevenue * 0.92
+
+  return { totalRevenue, totalOrders, newCustomers: newCust ?? 0, netProfit, repeatOrders, avgOrderValue }
+}
+
+// ─────────────────────────────────────────────
+// READ — Customer by phone
+// ─────────────────────────────────────────────
+
+export async function fetchCustomerByPhone(phone: string) {
+  const sb = createAdminClient()
+  const { data } = await sb.from('customers').select('*').eq('phone', phone).maybeSingle()
+  return data ? plain(data) : null
+}
+
+// ─────────────────────────────────────────────
+// CALCULATION ENGINE — Project PnL
+// ─────────────────────────────────────────────
+
+export async function calculateProjectPnL(
+  projectId: string,
+  dateFrom: string,
+  dateTo: string
+): Promise<ProjectPnL> {
+  const sb = createAdminClient()
+
+  // Fetch orders with package info
+  const { data: rawOrders, error: ordersErr } = await sb
+    .from('orders')
+    .select('id, total_price, package_id, packages(id, name, code)')
+    .eq('project_id', projectId)
+    .gte('order_date', dateFrom)
+    .lte('order_date', dateTo)
+    .neq('status', 'cancelled')
+
+  if (ordersErr) throw new Error(ordersErr.message)
+  const orders = plain(rawOrders ?? []) as {
+    id: string
+    total_price: string
+    package_id: string | null
+    packages: { id: string; name: string; code: string | null } | null
+  }[]
+
+  const total_revenue = orders.reduce((s, o) => s + Number(o.total_price), 0)
+  const total_orders = orders.length
+  const avg_order_value = total_orders > 0 ? total_revenue / total_orders : 0
+
+  // Package breakdown grouped by package_id
+  const pkgMap: Record<string, { package_name: string; code: string | null; units_sold: number; revenue: number }> = {}
+  for (const o of orders) {
+    const key = o.package_id ?? '__none__'
+    if (!pkgMap[key]) {
+      pkgMap[key] = {
+        package_name: o.packages?.name ?? 'No Package',
+        code: o.packages?.code ?? null,
+        units_sold: 0,
+        revenue: 0,
+      }
+    }
+    pkgMap[key].units_sold++
+    pkgMap[key].revenue += Number(o.total_price)
+  }
+  const package_breakdown = Object.values(pkgMap).sort((a, b) => b.revenue - a.revenue)
+
+  // Product cost: sum (product.cost × quantity) per package, then per order
+  const packageIds = [...new Set(orders.map(o => o.package_id).filter(Boolean))] as string[]
+  let product_cost = 0
+  if (packageIds.length > 0) {
+    const { data: rawItems } = await sb
+      .from('package_items')
+      .select('package_id, quantity, products(cost)')
+      .in('package_id', packageIds)
+
+    const items = plain(rawItems ?? []) as {
+      package_id: string
+      quantity: number
+      products: { cost: string } | null
+    }[]
+
+    const costPerPackage: Record<string, number> = {}
+    for (const item of items) {
+      const c = Number(item.products?.cost ?? 0) * Number(item.quantity)
+      costPerPackage[item.package_id] = (costPerPackage[item.package_id] ?? 0) + c
+    }
+    for (const o of orders) {
+      if (o.package_id) product_cost += costPerPackage[o.package_id] ?? 0
+    }
+  }
+
+  const shipping     = total_revenue * 0.05
+  const platform_fee = total_revenue * 0.03
+  const cost_estimate = {
+    shipping,
+    platform_fee,
+    product_cost,
+    total: shipping + platform_fee + product_cost,
+  }
+  const gross_profit  = total_revenue - cost_estimate.total
+  const profit_margin = total_revenue > 0 ? (gross_profit / total_revenue) * 100 : 0
+
+  return plain({ total_revenue, total_orders, avg_order_value, package_breakdown, cost_estimate, gross_profit, profit_margin })
+}
+
+// ─────────────────────────────────────────────
+// WRITE — Customers
+// ─────────────────────────────────────────────
+
+export async function upsertCustomer(name: string, phone: string, address?: string | null) {
+  const sb = createAdminClient()
+  const { data: existing } = await sb.from('customers').select('id').eq('phone', phone).maybeSingle()
+  if (existing) return existing.id as string
+
+  const { data, error } = await sb
+    .from('customers').insert({ name, phone, address: address ?? null }).select('id').single()
+  if (error) throw new Error(error.message)
+  return data.id as string
+}
+
+export async function bulkUpsertCustomers(rows: { name: string; phone: string; address?: string | null }[]): Promise<Record<string, string>> {
+  const sb = createAdminClient()
+  const phones = rows.map(r => r.phone)
+  const { data: existing } = await sb.from('customers').select('id, phone').in('phone', phones)
+
+  const map: Record<string, string> = {}
+  existing?.forEach(c => { map[c.phone] = c.id })
+
+  const missing = rows.filter(r => !map[r.phone])
+  if (missing.length > 0) {
+    const { data: created, error } = await sb
+      .from('customers')
+      .insert(missing.map(r => ({ name: r.name, phone: r.phone, address: r.address ?? null })))
+      .select('id, phone')
+    if (error) throw new Error(error.message)
+    created?.forEach(c => { map[c.phone] = c.id })
+  }
+  return map
+}
+
+// ─────────────────────────────────────────────
+// WRITE — Orders
+// ─────────────────────────────────────────────
+
+export async function createOrder(payload: {
+  customer_id: string | null
+  project_id: string
+  package_id?: string | null
+  product_name: string
+  package_name?: string | null
+  total_price: number
+  status: string
+  order_date: string
+  fb_name?: string | null
+  channel: string
+  purchase_reason: string
+  is_new_customer: boolean
+}) {
+  const sb = createAdminClient()
+  const { error } = await sb.from('orders').insert(payload)
+  if (error) throw new Error(error.message)
+}
+
+export async function bulkCreateOrders(rows: object[]) {
+  const sb = createAdminClient()
+  let success = 0, fail = 0
+  for (let i = 0; i < rows.length; i += 100) {
+    const { data, error } = await sb.from('orders').insert(rows.slice(i, i + 100)).select('id')
+    if (error) fail += rows.slice(i, i + 100).length
+    else success += data?.length ?? 0
+  }
+  return { success, fail }
+}
+
+export async function updateOrderStatus(id: string, status: string) {
+  const sb = createAdminClient()
+  const { error } = await sb.from('orders').update({ status }).eq('id', id)
+  if (error) throw new Error(error.message)
+}
+
+export async function deleteOrder(id: string) {
+  const sb = createAdminClient()
+  const { error } = await sb.from('orders').delete().eq('id', id)
+  if (error) throw new Error(error.message)
+}
+
+// ─────────────────────────────────────────────
+// WRITE — Products
+// ─────────────────────────────────────────────
+
+export async function createProduct(payload: {
+  project_id: string; sku: string; name: string; cost: number
+}) {
+  const sb = createAdminClient()
+  const { error } = await sb.from('products').insert(payload)
+  if (error) throw new Error(error.message)
+}
+
+export async function deleteProduct(id: string) {
+  const sb = createAdminClient()
+  const { error } = await sb.from('products').delete().eq('id', id)
+  if (error) throw new Error(error.message)
+}
+
+// ─────────────────────────────────────────────
+// WRITE — Packages
+// ─────────────────────────────────────────────
+
+export async function createPackage(
+  payload: {
+    project_id: string
+    name: string
+    code?: string | null
+    price: number | null
+    custom_attributes?: Record<string, unknown>
+  },
+  items: { product_id: string; quantity: number }[]
+) {
+  const sb = createAdminClient()
+  const { data: pkg, error } = await sb
+    .from('packages')
+    .insert({
+      project_id: payload.project_id,
+      name: payload.name,
+      code: payload.code || null,
+      price: payload.price,
+      custom_attributes: payload.custom_attributes ?? {},
+    })
+    .select('id')
+    .single()
+  if (error) throw new Error(error.message)
+
+  if (items.length > 0) {
+    const { error: ie } = await sb.from('package_items').insert(
+      items.map(i => ({ package_id: pkg.id, product_id: i.product_id, quantity: i.quantity }))
+    )
+    if (ie) console.error('package_items insert:', ie.message)
+  }
+  return pkg.id
+}
+
+export async function deletePackage(id: string) {
+  const sb = createAdminClient()
+  const { error } = await sb.from('packages').delete().eq('id', id)
+  if (error) throw new Error(error.message)
+}
+
+export async function bulkCreatePackages(
+  projectId: string,
+  rows: { name: string; price: number; product1: string; product2: string; product3: string; amount: number }[],
+  productMap: Record<string, string>
+) {
+  const sb = createAdminClient()
+  let success = 0, fail = 0
+
+  for (const row of rows) {
+    const { data: pkg, error } = await sb
+      .from('packages').insert({ project_id: projectId, name: row.name, price: row.price }).select('id').single()
+    if (error || !pkg) { fail++; continue }
+
+    const items = [row.product1, row.product2, row.product3]
+      .filter(Boolean)
+      .map(n => ({ package_id: pkg.id, product_id: productMap[n.toLowerCase()], quantity: row.amount }))
+      .filter(i => i.product_id)
+
+    if (items.length > 0) await sb.from('package_items').insert(items)
+    success++
+  }
+  return { success, fail }
+}
+
+// ─────────────────────────────────────────────
+// WRITE — Projects
+// ─────────────────────────────────────────────
+
+export async function createProject(name: string, code: string) {
+  const sb = await createClient()
+  const { error } = await sb.from('projects').insert({ name, code: code.toUpperCase() })
+  if (error) throw new Error(error.message)
+}
+
+// ─────────────────────────────────────────────
+// Projects + Packages — hook-compatible actions
+// These return data shaped to match useProjects hook types
+// ─────────────────────────────────────────────
+
+const SEED_PROJECTS = [
+  { name: 'FIOR', code: 'FIOR' },
+  { name: 'NE',   code: 'NE' },
+  { name: 'DD',   code: 'DD' },
+  { name: 'KHH',  code: 'KHH' },
+  { name: 'Juji', code: 'JUJI' },
+]
+
+function mapDbPackage(pkg: any) {
+  const attrs = (pkg.custom_attributes ?? {}) as Record<string, unknown>
+  const { notes, ...rest } = attrs
+  const customValues: Record<string, string> = {}
+  Object.entries(rest).forEach(([k, v]) => { customValues[k] = String(v ?? '') })
+  return plain({
+    id:           pkg.id,
+    projectId:    pkg.project_id,
+    name:         pkg.name,
+    code:         pkg.code ?? '',
+    price:        Number(pkg.price ?? 0),
+    notes:        (notes as string) ?? '',
+    customValues,
+    createdAt:    pkg.created_at ?? new Date().toISOString(),
+  })
+}
+
+function mapDbProject(p: any) {
+  return plain({
+    id:        p.id,
+    name:      p.name,
+    code:      p.code,
+    createdAt: p.created_at,
+    packages:  ((p.packages ?? []) as any[])
+      .filter((pkg: any) => pkg.is_active !== false)
+      .sort((a: any, b: any) => a.sort_order - b.sort_order || a.name.localeCompare(b.name))
+      .map(mapDbPackage),
+  })
+}
+
+export async function fetchProjectsWithPackages() {
+  const sb = await createClient()
+
+  console.log('[fetchProjectsWithPackages] URL:', process.env.NEXT_PUBLIC_SUPABASE_URL)
+
+  // Seed if empty
+  const { count, error: countErr } = await sb
+    .from('projects')
+    .select('*', { count: 'exact', head: true })
+
+  if (countErr) {
+    console.error('[fetchProjectsWithPackages] count error:', countErr.message)
+    throw new Error(countErr.message)
+  }
+
+  console.log('[fetchProjectsWithPackages] project count:', count)
+
+  if ((count ?? 0) === 0) {
+    console.log('[fetchProjectsWithPackages] seeding default projects…')
+    const { error: seedErr } = await sb.from('projects').insert(SEED_PROJECTS)
+    if (seedErr) console.error('[fetchProjectsWithPackages] seed error:', seedErr.message)
+    else console.log('[fetchProjectsWithPackages] seeded', SEED_PROJECTS.length, 'projects')
+  }
+
+  const { data, error } = await sb
+    .from('projects')
+    .select('*, packages(*)')
+    .order('name')
+
+  if (error) {
+    console.error('[fetchProjectsWithPackages] fetch error:', error.message)
+    throw new Error(error.message)
+  }
+
+  console.log('[fetchProjectsWithPackages] returned', data?.length ?? 0, 'projects')
+  return (data ?? []).map(mapDbProject)
+}
+
+export async function createProjectAction(name: string, code: string) {
+  const sb = createAdminClient()
+  const { data, error } = await sb
+    .from('projects')
+    .insert({ name, code: code.toUpperCase() })
+    .select()
+    .single()
+  if (error) throw new Error(error.message)
+  return plain({ id: data.id, name: data.name, code: data.code, createdAt: data.created_at, packages: [] })
+}
+
+export async function updateProjectAction(id: string, name: string, code: string) {
+  const sb = createAdminClient()
+  const { error } = await sb
+    .from('projects')
+    .update({ name, code: code.toUpperCase() })
+    .eq('id', id)
+  if (error) throw new Error(error.message)
+}
+
+export async function deleteProjectAction(id: string) {
+  const sb = createAdminClient()
+  const { error } = await sb.from('projects').delete().eq('id', id)
+  if (error) throw new Error(error.message)
+}
+
+// Returns true when a Supabase error is caused by a column that doesn't exist
+// (PostgreSQL error code 42703 = undefined_column).
+function isColumnError(err: { code?: string; message?: string }): boolean {
+  return (
+    err.code === '42703' ||
+    /column .+ (of relation|does not exist)/i.test(err.message ?? '') ||
+    /does not exist/i.test(err.message ?? '')
+  )
+}
+
+export async function createPackageAction(
+  projectId: string,
+  name: string,
+  code: string,
+  price: number,
+  notes?: string,
+  customValues?: Record<string, string>,
+) {
+  // Admin client bypasses the packages_insert RLS policy (which requires
+  // is_admin() on the user JWT — not available in all session contexts).
+  const sb = createAdminClient()
+
+  const customAttrs = { notes: notes ?? '', ...(customValues ?? {}) }
+  const fullPayload = {
+    project_id:        projectId,
+    name,
+    code:              code || null,
+    price,
+    custom_attributes: customAttrs,
+    is_active:         true,
+    sort_order:        0,
+  }
+
+  // ── Attempt 1: upsert on (project_id, code) ───────────────────────────────
+  // NOTE: Supabase cannot use partial indexes as upsert conflict targets
+  // (the migration 006 index has WHERE code IS NOT NULL). This attempt may
+  // therefore still throw a unique-constraint error for codes that already
+  // exist. Attempts 2 and 3 handle that.
+  console.log('[createPackageAction] attempt 1 — upsert on project_id,code:', JSON.stringify(fullPayload))
+
+  const { data: d1, error: e1 } = await sb
+    .from('packages')
+    .upsert(fullPayload, { onConflict: 'project_id,code' })
+    .select()
+    .single()
+
+  if (!e1) return mapDbPackage(d1)
+
+  console.error('[createPackageAction] attempt 1 failed:', {
+    message: e1.message, code: (e1 as any).code,
+    details: (e1 as any).details, hint: (e1 as any).hint,
+  })
+
+  // ── Attempt 2: manual upsert by name ─────────────────────────────────────
+  // Handles: partial-index upsert failures, special characters in code,
+  // duplicate name conflicts. Find the row by (project_id, name); if it
+  // exists update it, otherwise insert without the code field.
+  if (!isColumnError(e1)) {
+    console.warn('[createPackageAction] attempt 2 — find by name, then update or insert without code')
+
+    const { data: existing } = await sb
+      .from('packages')
+      .select('id')
+      .eq('project_id', projectId)
+      .eq('name', name)
+      .maybeSingle()
+
+    if (existing) {
+      // Row found — update in place
+      const { data: d2u, error: e2u } = await sb
+        .from('packages')
+        .update({ code: code || null, price, custom_attributes: customAttrs, is_active: true })
+        .eq('id', existing.id)
+        .select()
+        .single()
+
+      if (!e2u) {
+        console.log('[createPackageAction] attempt 2 — updated existing row by name, id:', existing.id)
+        return mapDbPackage(d2u)
+      }
+
+      console.error('[createPackageAction] attempt 2 update failed:', {
+        message: e2u.message, code: (e2u as any).code,
+        details: (e2u as any).details, hint: (e2u as any).hint,
+      })
+
+      // Column error on update → fall back to updating only price
+      if (isColumnError(e2u)) {
+        const { data: d2m, error: e2m } = await sb
+          .from('packages').update({ price }).eq('id', existing.id).select().single()
+        if (!e2m) return mapDbPackage(d2m)
+        console.error('[createPackageAction] attempt 2 minimal update failed:', e2m)
+        throw new Error(e2m.message)
+      }
+
+      throw new Error(e2u.message)
+    }
+
+    // Row not found — insert without code to avoid the problematic column
+    const payloadNoCode = { project_id: projectId, name, price, custom_attributes: customAttrs, is_active: true, sort_order: 0 }
+    console.log('[createPackageAction] attempt 2 — insert without code:', JSON.stringify(payloadNoCode))
+
+    const { data: d2i, error: e2i } = await sb
+      .from('packages').insert(payloadNoCode).select().single()
+
+    if (!e2i) return mapDbPackage(d2i)
+
+    console.error('[createPackageAction] attempt 2 insert failed:', {
+      message: e2i.message, code: (e2i as any).code,
+      details: (e2i as any).details, hint: (e2i as any).hint,
+    })
+
+    // If this is also a column error, fall through to attempt 3
+    if (!isColumnError(e2i)) throw new Error(e2i.message)
+  }
+
+  // ── Attempt 3: base schema only (migration 006 not applied) ───────────────
+  // Only columns that exist in 001_initial_schema: project_id, name, price.
+  console.warn('[createPackageAction] attempt 3 — base schema only (migration 006 not applied?)')
+
+  const { data: existingBase } = await sb
+    .from('packages').select('id').eq('project_id', projectId).eq('name', name).maybeSingle()
+
+  if (existingBase) {
+    const { data: d3u, error: e3u } = await sb
+      .from('packages').update({ price }).eq('id', existingBase.id).select().single()
+    if (!e3u) {
+      console.warn('[createPackageAction] attempt 3 — updated existing row (base schema)')
+      return mapDbPackage(d3u)
+    }
+    console.error('[createPackageAction] attempt 3 update failed:', e3u)
+    throw new Error(e3u.message)
+  }
+
+  const basePayload = { project_id: projectId, name, price }
+  console.log('[createPackageAction] attempt 3 — inserting base payload:', JSON.stringify(basePayload))
+
+  const { data: d3, error: e3 } = await sb
+    .from('packages').insert(basePayload).select().single()
+
+  if (!e3) {
+    console.warn('[createPackageAction] saved with base schema — run supabase/migrations/006_flexible_packages.sql for full functionality')
+    return mapDbPackage(d3)
+  }
+
+  console.error('[createPackageAction] all 3 attempts failed:', e3)
+  throw new Error(
+    `Package save failed after 3 attempts. ` +
+    `Attempt 1: "${(e1 as any).message}" | Attempt 3: "${e3.message}". ` +
+    `Run supabase/migrations/006_flexible_packages.sql on your database.`
+  )
+}
+
+export async function updatePackageAction(
+  id: string,
+  name: string,
+  code: string,
+  price: number,
+  notes?: string,
+  customValues?: Record<string, string>,
+) {
+  const sb = createAdminClient()
+
+  const fullPayload = {
+    name,
+    code:              code || null,
+    price,
+    custom_attributes: { notes: notes ?? '', ...(customValues ?? {}) },
+  }
+
+  console.log('[updatePackageAction] updating id=%s payload:', id, JSON.stringify(fullPayload))
+
+  const { error } = await sb.from('packages').update(fullPayload).eq('id', id)
+
+  if (!error) return
+
+  console.error('[updatePackageAction] full error:', {
+    message: error.message,
+    code:    (error as any).code,
+    details: (error as any).details,
+    hint:    (error as any).hint,
+  })
+
+  if (isColumnError(error)) {
+    console.warn('[updatePackageAction] column error — retrying with base schema only')
+    const basePayload = { name, price }
+    const { error: fallbackError } = await sb.from('packages').update(basePayload).eq('id', id)
+    if (fallbackError) {
+      console.error('[updatePackageAction] fallback failed:', fallbackError)
+      throw new Error(fallbackError.message)
+    }
+    return
+  }
+
+  throw new Error(error.message)
+}
+
+export async function deletePackageAction(id: string) {
+  const sb = createAdminClient()
+  const { error } = await sb.from('packages').delete().eq('id', id)
+  if (error) throw new Error(error.message)
+}

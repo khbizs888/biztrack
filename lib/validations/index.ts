@@ -12,13 +12,18 @@ export const customerSchema = z.object({
 })
 
 export const orderSchema = z.object({
-  customer_phone: z.string().min(8, 'Phone is required'),
-  customer_name: z.string().min(1, 'Customer name is required'),
+  customer_name: z.string().min(1, 'Name is required'),
+  customer_phone: z.string().optional(),
+  fb_name: z.string().optional(),
   project_id: z.string().uuid('Select a project'),
-  product_name: z.string().min(1, 'Product name is required'),
+  channel: z.string().min(1, 'Channel is required'),
+  product_name: z.string().min(1, 'Product is required'),
   package_name: z.string().optional(),
+  package_id: z.string().uuid().optional().nullable(),
+  purchase_reason: z.string().min(1, 'Purchase reason is required'),
+  is_new_customer: z.boolean(),
   total_price: z.coerce.number().min(0, 'Price must be positive'),
-  status: z.enum(['pending', 'processing', 'shipped', 'delivered', 'cancelled']),
+  status: z.enum(['pending', 'processing', 'shipped', 'delivered', 'cancelled']).default('pending'),
   order_date: z.string().min(1, 'Order date is required'),
 })
 
@@ -31,6 +36,7 @@ export const productSchema = z.object({
 
 export const packageSchema = z.object({
   name: z.string().min(1, 'Package name is required'),
+  code: z.string().optional(),
   price: z.coerce.number().min(0, 'Price must be positive').nullable(),
   project_id: z.string().uuid(),
 })

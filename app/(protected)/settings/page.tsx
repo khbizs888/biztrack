@@ -6,6 +6,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { createClient } from '@/lib/supabase/client'
 import { passwordSchema, type PasswordFormData } from '@/lib/validations'
 import PageHeader from '@/components/shared/PageHeader'
+import ThemeCustomizer from '@/components/shared/ThemeCustomizer'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -48,6 +49,8 @@ export default function SettingsPage() {
   return (
     <div className="space-y-6 max-w-2xl">
       <PageHeader title="Settings" />
+
+      <ThemeCustomizer />
 
       <Card>
         <CardHeader>

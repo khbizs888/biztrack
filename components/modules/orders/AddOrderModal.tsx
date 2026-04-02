@@ -1,202 +1,260 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { useForm } from 'react-hook-form'
+import { useState } from 'react'
+import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useQueryClient, useQuery } from '@tanstack/react-query'
-import { createClient } from '@/lib/supabase/client'
+import { useQueryClient } from '@tanstack/react-query'
 import { orderSchema, type OrderFormData } from '@/lib/validations'
+import {
+  fetchCustomerByPhone, upsertCustomer, createOrder,
+} from '@/app/actions/data'
+import { useProjects, type Package } from '@/lib/hooks/useProjects'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
-import type { Package } from '@/lib/types'
+import { cn } from '@/lib/utils'
 
 interface Props { open: boolean; onClose: () => void }
 
+function Req({ children }: { children: React.ReactNode }) {
+  return <span>{children} <span className="text-red-500">*</span></span>
+}
+
 export default function AddOrderModal({ open, onClose }: Props) {
-  const supabase = createClient()
   const queryClient = useQueryClient()
   const [loading, setLoading] = useState(false)
   const [lookingUp, setLookingUp] = useState(false)
-  const [returning, setReturning] = useState(false)
   const [foundCustomerId, setFoundCustomerId] = useState<string | null>(null)
+  const [autoFilled, setAutoFilled] = useState<Set<string>>(new Set())
 
-  const { register, handleSubmit, setValue, watch, reset, formState: { errors } } = useForm<OrderFormData>({
+  const today = new Date().toISOString().split('T')[0]
+
+  const { register, handleSubmit, setValue, watch, reset, control, formState: { errors } } = useForm<OrderFormData>({
     resolver: zodResolver(orderSchema),
-    defaultValues: { status: 'pending', order_date: new Date().toISOString().split('T')[0] },
+    defaultValues: { status: 'pending', order_date: today, is_new_customer: true, package_id: null },
   })
 
   const selectedProjectId = watch('project_id')
-  const selectedPackageName = watch('package_name')
 
-  const { data: projects } = useQuery({
-    queryKey: ['projects'],
-    queryFn: async () => { const { data } = await supabase.from('projects').select('*').order('name'); return data ?? [] },
-  })
-
-  const { data: packages } = useQuery({
-    queryKey: ['packages', selectedProjectId],
-    enabled: !!selectedProjectId,
-    queryFn: async () => {
-      const { data } = await supabase.from('packages').select('*').eq('project_id', selectedProjectId)
-      return data ?? []
-    },
-  })
-
-  const { data: products } = useQuery({
-    queryKey: ['products', selectedProjectId],
-    enabled: !!selectedProjectId,
-    queryFn: async () => {
-      const { data } = await supabase.from('products').select('*').eq('project_id', selectedProjectId)
-      return data ?? []
-    },
-  })
-
-  useEffect(() => {
-    if (selectedPackageName && packages) {
-      const pkg = packages.find((p: Package) => p.name === selectedPackageName)
-      if (pkg?.price) setValue('total_price', pkg.price)
-    }
-  }, [selectedPackageName, packages, setValue])
+  // Load projects from localStorage
+  const { projects } = useProjects()
+  const projectPackages: Package[] = projects.find(p => p.id === selectedProjectId)?.packages ?? []
 
   async function lookupPhone() {
     const phone = watch('customer_phone')
-    if (!phone) return
+    if (!phone || phone.length < 8) return
     setLookingUp(true)
-    const { data } = await supabase.from('customers').select('*').eq('phone', phone).single()
-    if (data) {
-      setValue('customer_name', data.name)
-      setFoundCustomerId(data.id)
-      setReturning(true)
+    const customer = await fetchCustomerByPhone(phone)
+    if (customer) {
+      setValue('customer_name', customer.name)
+      setValue('is_new_customer', false)
+      setFoundCustomerId(customer.id)
+      setAutoFilled(new Set(['customer_name', 'is_new_customer']))
     } else {
+      setValue('is_new_customer', true)
       setFoundCustomerId(null)
-      setReturning(false)
+      setAutoFilled(new Set(['is_new_customer']))
     }
     setLookingUp(false)
   }
 
   async function onSubmit(data: OrderFormData) {
     setLoading(true)
-    let customerId = foundCustomerId
-
-    if (!customerId) {
-      const { data: newCustomer, error } = await supabase
-        .from('customers')
-        .insert({ name: data.customer_name, phone: data.customer_phone })
-        .select()
-        .single()
-      if (error) { toast.error('Failed to create customer'); setLoading(false); return }
-      customerId = newCustomer.id
+    try {
+      let customerId = foundCustomerId
+      if (!customerId && data.customer_phone) {
+        customerId = await upsertCustomer(data.customer_name, data.customer_phone)
+      }
+      await createOrder({
+        customer_id: customerId,
+        project_id: data.project_id,
+        package_id: data.package_id ?? null,
+        product_name: data.product_name,
+        package_name: data.package_name || null,
+        total_price: data.total_price,
+        status: data.status,
+        order_date: data.order_date,
+        fb_name: data.fb_name || null,
+        channel: data.channel,
+        purchase_reason: data.purchase_reason,
+        is_new_customer: data.is_new_customer,
+      })
+      toast.success('Order created')
+      queryClient.invalidateQueries({ queryKey: ['orders'] })
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      handleClose()
+    } catch (e: any) {
+      toast.error(e.message ?? 'Failed to create order')
+    } finally {
+      setLoading(false)
     }
-
-    const { error } = await supabase.from('orders').insert({
-      customer_id: customerId,
-      project_id: data.project_id,
-      product_name: data.product_name,
-      package_name: data.package_name || null,
-      total_price: data.total_price,
-      status: data.status,
-      order_date: data.order_date,
-    })
-
-    if (error) { toast.error('Failed to create order'); setLoading(false); return }
-    toast.success('Order created successfully')
-    queryClient.invalidateQueries({ queryKey: ['orders'] })
-    queryClient.invalidateQueries({ queryKey: ['dashboard'] })
-    reset()
-    setFoundCustomerId(null)
-    setReturning(false)
-    onClose()
-    setLoading(false)
   }
 
+  function handleClose() {
+    reset({ status: 'pending', order_date: today, is_new_customer: true, package_id: null })
+    setFoundCustomerId(null)
+    setAutoFilled(new Set())
+    onClose()
+  }
+
+  function handlePackageSelect(packageId: string) {
+    if (packageId === 'none') {
+      setValue('product_name', '')
+      setValue('package_name', '')
+      setValue('package_id', null)
+      return
+    }
+    const pkg = projectPackages.find(p => p.id === packageId)
+    if (!pkg) return
+    setValue('product_name', pkg.name)
+    setValue('package_name', pkg.name)
+    setValue('package_id', pkg.id)
+    setValue('total_price', pkg.price)
+  }
+
+  function packageLabel(pkg: Package): string {
+    const parts: string[] = []
+    if (pkg.code) parts.push(`[${pkg.code}]`)
+    parts.push(pkg.name)
+    parts.push(`— RM ${pkg.price.toFixed(2)}`)
+    return parts.join(' ')
+  }
+
+  const isAuto = (f: string) => autoFilled.has(f)
+  const selectedPackageId = watch('package_id')
+
   return (
-    <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Add New Order</DialogTitle>
-        </DialogHeader>
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+    <Dialog open={open} onOpenChange={handleClose}>
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogHeader><DialogTitle>Add Order</DialogTitle></DialogHeader>
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-3">
+          {/* Name + FB Name */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
-              <Label>Customer Phone</Label>
-              <div className="flex gap-1">
-                <Input placeholder="01x-xxxxxxx" {...register('customer_phone')} onBlur={lookupPhone} />
-                {returning && <Badge variant="success" className="shrink-0 self-center">Returning</Badge>}
-              </div>
-              {errors.customer_phone && <p className="text-xs text-destructive">{errors.customer_phone.message}</p>}
-            </div>
-            <div className="space-y-1">
-              <Label>Customer Name</Label>
-              <Input placeholder="Full name" {...register('customer_name')} />
+              <Label><Req>Name</Req></Label>
+              <Input placeholder="Full name" {...register('customer_name')}
+                className={cn(isAuto('customer_name') && 'text-red-600 border-red-200')} />
+              {isAuto('customer_name') && <p className="text-xs text-red-500">Auto-filled from phone lookup</p>}
               {errors.customer_name && <p className="text-xs text-destructive">{errors.customer_name.message}</p>}
             </div>
+            <div className="space-y-1">
+              <Label>FB Name</Label>
+              <Input placeholder="Facebook name" {...register('fb_name')} />
+            </div>
           </div>
 
+          {/* Phone */}
           <div className="space-y-1">
-            <Label>Project</Label>
-            <Select onValueChange={v => setValue('project_id', v)}>
-              <SelectTrigger><SelectValue placeholder="Select project" /></SelectTrigger>
+            <Label>No. Tel</Label>
+            <Input placeholder="01x-xxxxxxx" {...register('customer_phone')} onBlur={lookupPhone} />
+            {lookingUp && <p className="text-xs text-muted-foreground">Looking up customer…</p>}
+          </div>
+
+          {/* Project + Channel */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label><Req>Project</Req></Label>
+              <Controller name="project_id" control={control} render={({ field }) => (
+                <Select value={field.value} onValueChange={v => {
+                  field.onChange(v)
+                  setValue('product_name', '')
+                  setValue('package_name', '')
+                  setValue('package_id', null)
+                }}>
+                  <SelectTrigger><SelectValue placeholder="Select project" /></SelectTrigger>
+                  <SelectContent>
+                    {projects.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              )} />
+              {errors.project_id && <p className="text-xs text-destructive">{errors.project_id.message}</p>}
+            </div>
+            <div className="space-y-1">
+              <Label><Req>Channel</Req></Label>
+              <Input placeholder="e.g. Shopee, TikTok" {...register('channel')} />
+              {errors.channel && <p className="text-xs text-destructive">{errors.channel.message}</p>}
+            </div>
+          </div>
+
+          {/* Product (from project packages) */}
+          <div className="space-y-1">
+            <Label><Req>Product / Package</Req></Label>
+            <Select
+              value={selectedPackageId ?? 'none'}
+              onValueChange={handlePackageSelect}
+              disabled={!selectedProjectId}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder={selectedProjectId ? 'Select package' : 'Pick project first'} />
+              </SelectTrigger>
               <SelectContent>
-                {projects?.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                <SelectItem value="none">— None / Enter manually —</SelectItem>
+                {projectPackages.map(p => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {packageLabel(p)}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
-            {errors.project_id && <p className="text-xs text-destructive">{errors.project_id.message}</p>}
+            {selectedPackageId && (
+              <p className="text-xs text-green-600">Price auto-filled from package</p>
+            )}
+            {selectedProjectId && projectPackages.length === 0 && (
+              <p className="text-xs text-muted-foreground">No packages defined for this project</p>
+            )}
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label>Product</Label>
-              <Select onValueChange={v => setValue('product_name', v)}>
-                <SelectTrigger><SelectValue placeholder="Select product" /></SelectTrigger>
-                <SelectContent>
-                  {products?.map((p: any) => <SelectItem key={p.id} value={p.name}>{p.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-              {errors.product_name && <p className="text-xs text-destructive">{errors.product_name.message}</p>}
-            </div>
-            <div className="space-y-1">
-              <Label>Package</Label>
-              <Select onValueChange={v => setValue('package_name', v)}>
-                <SelectTrigger><SelectValue placeholder="Select package" /></SelectTrigger>
-                <SelectContent>
-                  {packages?.map((p: any) => <SelectItem key={p.id} value={p.name}>{p.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
+          {/* Product name (manual if no package selected) */}
+          <div className="space-y-1">
+            <Label><Req>Product Name</Req></Label>
+            <Input placeholder="Product description" {...register('product_name')} />
+            {errors.product_name && <p className="text-xs text-destructive">{errors.product_name.message}</p>}
           </div>
 
+          {/* Purchase Reason */}
+          <div className="space-y-1">
+            <Label><Req>Purchase Reason</Req></Label>
+            <Input placeholder="e.g. Weight loss, skin care" {...register('purchase_reason')} />
+            {errors.purchase_reason && <p className="text-xs text-destructive">{errors.purchase_reason.message}</p>}
+          </div>
+
+          {/* New/Repeat */}
+          <div className="space-y-1">
+            <Label><Req>New / Repeat</Req></Label>
+            <Controller name="is_new_customer" control={control} render={({ field }) => (
+              <Select value={field.value ? 'new' : 'repeat'}
+                onValueChange={v => { field.onChange(v === 'new'); setAutoFilled(p => { const n = new Set(p); n.delete('is_new_customer'); return n }) }}>
+                <SelectTrigger className={cn(isAuto('is_new_customer') && 'border-red-200 text-red-600')}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="new">New</SelectItem>
+                  <SelectItem value="repeat">Repeat</SelectItem>
+                </SelectContent>
+              </Select>
+            )} />
+            {isAuto('is_new_customer') && <p className="text-xs text-red-500">Auto-detected from phone lookup</p>}
+          </div>
+
+          {/* Price + Date */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
-              <Label>Price (RM)</Label>
+              <Label><Req>Total Price (RM)</Req></Label>
               <Input type="number" step="0.01" placeholder="0.00" {...register('total_price')} />
               {errors.total_price && <p className="text-xs text-destructive">{errors.total_price.message}</p>}
             </div>
             <div className="space-y-1">
-              <Label>Status</Label>
-              <Select defaultValue="pending" onValueChange={v => setValue('status', v as any)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {['pending','processing','shipped','delivered','cancelled'].map(s => (
-                    <SelectItem key={s} value={s} className="capitalize">{s}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label>Date</Label>
+              <Input type="date" {...register('order_date')} />
             </div>
           </div>
 
-          <div className="space-y-1">
-            <Label>Order Date</Label>
-            <Input type="date" {...register('order_date')} />
-          </div>
-
           <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-            <Button type="submit" disabled={loading}>{loading ? 'Saving...' : 'Create Order'}</Button>
+            <Button type="button" variant="outline" onClick={handleClose}>Cancel</Button>
+            <Button type="submit" disabled={loading}>{loading ? 'Saving…' : 'Submit'}</Button>
           </div>
         </form>
       </DialogContent>

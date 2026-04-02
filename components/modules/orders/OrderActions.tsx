@@ -2,68 +2,64 @@
 
 import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { createClient } from '@/lib/supabase/client'
+import { updateOrderStatus, deleteOrder } from '@/app/actions/data'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import { MoreHorizontal, Pencil, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
+import { Trash2 } from 'lucide-react'
 import type { Order, OrderStatus } from '@/lib/types'
 
-interface Props { order: Order }
+const STATUSES: OrderStatus[] = ['pending', 'processing', 'shipped', 'delivered', 'cancelled']
 
-export default function OrderActions({ order }: Props) {
-  const supabase = createClient()
+export default function OrderActions({ order }: { order: Order }) {
   const queryClient = useQueryClient()
-  const [deleteOpen, setDeleteOpen] = useState(false)
-  const [deleting, setDeleting] = useState(false)
+  const [updating, setUpdating] = useState(false)
 
-  async function changeStatus(status: OrderStatus) {
-    const { error } = await supabase.from('orders').update({ status }).eq('id', order.id)
-    if (error) { toast.error('Failed to update status'); return }
-    toast.success('Status updated')
-    queryClient.invalidateQueries({ queryKey: ['orders'] })
+  async function handleStatusChange(status: string) {
+    setUpdating(true)
+    try {
+      await updateOrderStatus(order.id, status)
+      queryClient.invalidateQueries({ queryKey: ['orders'] })
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      toast.success('Status updated')
+    } catch (e: any) {
+      toast.error(e.message ?? 'Failed to update')
+    } finally {
+      setUpdating(false)
+    }
   }
 
-  async function confirmDelete() {
-    setDeleting(true)
-    const { error } = await supabase.from('orders').delete().eq('id', order.id)
-    if (error) { toast.error('Failed to delete order'); setDeleting(false); return }
-    toast.success('Order deleted')
-    queryClient.invalidateQueries({ queryKey: ['orders'] })
-    queryClient.invalidateQueries({ queryKey: ['dashboard'] })
-    setDeleteOpen(false)
-    setDeleting(false)
+  async function handleDelete() {
+    if (!confirm('Delete this order? This cannot be undone.')) return
+    try {
+      await deleteOrder(order.id)
+      queryClient.invalidateQueries({ queryKey: ['orders'] })
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      toast.success('Order deleted')
+    } catch (e: any) {
+      toast.error(e.message ?? 'Failed to delete')
+    }
   }
 
   return (
-    <div className="flex items-center gap-1 justify-end">
-      <Select value={order.status} onValueChange={(v) => changeStatus(v as OrderStatus)}>
-        <SelectTrigger className="h-8 w-32 text-xs">
+    <div className="flex items-center gap-1">
+      <Select value={order.status} onValueChange={handleStatusChange} disabled={updating}>
+        <SelectTrigger className="h-7 text-xs w-28">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          {(['pending','processing','shipped','delivered','cancelled'] as OrderStatus[]).map(s => (
+          {STATUSES.map(s => (
             <SelectItem key={s} value={s} className="text-xs capitalize">{s}</SelectItem>
           ))}
         </SelectContent>
       </Select>
-      <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => setDeleteOpen(true)}>
+      <Button
+        variant="ghost" size="icon"
+        className="h-7 w-7 text-destructive hover:text-destructive"
+        onClick={handleDelete}
+      >
         <Trash2 className="h-3.5 w-3.5" />
       </Button>
-
-      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Delete Order</DialogTitle></DialogHeader>
-          <p className="text-sm text-muted-foreground">Are you sure you want to delete this order? This action cannot be undone.</p>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteOpen(false)}>Cancel</Button>
-            <Button variant="destructive" onClick={confirmDelete} disabled={deleting}>
-              {deleting ? 'Deleting...' : 'Delete'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }
