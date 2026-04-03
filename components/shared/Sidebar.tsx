@@ -10,6 +10,7 @@ import {
   LayoutDashboard, ShoppingCart, BarChart2,
   FolderKanban, Settings, LogOut, Leaf, ChevronDown, ChevronRight,
   PanelLeftClose, PanelLeft, Target, UserCog, Megaphone,
+  Package, DollarSign, TrendingUp, Truck, Warehouse,
 } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
@@ -25,20 +26,40 @@ interface NavGroup {
 }
 
 const NAV: NavGroup[] = [
-  { label: 'Home',               icon: LayoutDashboard, href: '/dashboard' },
-  { label: 'Daily Order',        icon: ShoppingCart,    href: '/orders' },
+  { label: 'Home',        icon: LayoutDashboard, href: '/dashboard' },
+  { label: 'Daily Order', icon: ShoppingCart,    href: '/orders' },
   {
     label: 'Reports', icon: BarChart2,
     children: [
       { label: 'Customer Data', href: '/customers' },
       { label: 'Sales Report',  href: '/analytics' },
-      { label: 'PnL',           href: '/pnl' },
+    ],
+  },
+  {
+    label: 'Finance', icon: DollarSign,
+    children: [
+      { label: 'PnL',      href: '/pnl' },
+      { label: 'Expenses', href: '/expenses' },
+    ],
+  },
+  {
+    label: 'Catalog', icon: Package,
+    children: [
+      { label: 'Products',  href: '/products' },
+      { label: 'Inventory', href: '/inventory' },
+      { label: 'Suppliers', href: '/suppliers' },
     ],
   },
   {
     label: 'Project Management', icon: FolderKanban,
     children: [
       { label: 'Products & Packages', href: '/projects' },
+    ],
+  },
+  {
+    label: 'Marketing', icon: TrendingUp,
+    children: [
+      { label: 'Campaigns', href: '/campaigns' },
     ],
   },
   { label: 'KPI',                icon: Target,   href: '/kpi' },

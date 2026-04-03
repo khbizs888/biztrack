@@ -51,10 +51,21 @@ export interface Order {
 
 export interface Product {
   id: string
-  project_id: string
+  project_id: string | null
   sku: string
   name: string
   cost: number
+  brand: string | null
+  category: string | null
+  unit_cost: number | null
+  selling_price: number | null
+  weight_g: number | null
+  platform: string[]
+  status: string
+  description: string | null
+  image_url: string | null
+  created_at: string
+  updated_at: string
 }
 
 export interface Package {
@@ -119,12 +130,56 @@ export interface Salary {
 
 export interface Expense {
   id: string
-  project_id: string
-  type: string
+  project_id: string | null
+  type: string | null
+  category: string | null
+  brand: string | null
   amount: number
   date: string
   notes: string | null
+  description: string | null
+  payment_method: string | null
+  receipt_url: string | null
+  recurring: boolean
   projects?: Project
+}
+
+export interface InventorySummary {
+  product_id: string
+  sku: string
+  product_name: string
+  brand: string | null
+  current_stock: number
+}
+
+export interface Supplier {
+  id: string
+  name: string
+  contact_person: string | null
+  phone: string | null
+  email: string | null
+  products_supplied: string
+  lead_time_days: number | null
+  payment_terms: string | null
+  notes: string | null
+  status: string
+  created_at: string
+}
+
+export interface Campaign {
+  id: string
+  name: string
+  platform: string
+  brand: string
+  budget: number
+  spent: number
+  start_date: string
+  end_date: string | null
+  status: string
+  objective: string
+  target_product_id: string | null
+  notes: string | null
+  created_at: string
 }
 
 export interface DashboardKPIs {
