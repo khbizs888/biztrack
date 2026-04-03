@@ -21,7 +21,7 @@ interface Props {
 }
 
 const EMPTY = {
-  sku: '', name: '', project_id: '', brand: '', category: '',
+  sku: '', name: '', project_id: '__none__', brand: '', category: '',
   unit_cost: '', selling_price: '', weight_g: '',
   platform: [] as string[], status: 'Active', description: '',
 }
@@ -48,7 +48,7 @@ export default function ProductModal({ open, onClose, onSaved, product }: Props)
       setForm(product ? {
         sku:           product.sku ?? '',
         name:          product.name ?? '',
-        project_id:    product.project_id ?? '',
+        project_id:    product.project_id ?? '__none__',
         brand:         product.brand ?? '',
         category:      product.category ?? '',
         unit_cost:     product.unit_cost?.toString() ?? '',
@@ -62,6 +62,10 @@ export default function ProductModal({ open, onClose, onSaved, product }: Props)
   }, [open, product])
 
   function handleProjectChange(projectId: string) {
+    if (projectId === '__none__') {
+      setForm(f => ({ ...f, project_id: '__none__' }))
+      return
+    }
     const proj = projects.find(p => p.id === projectId)
     setForm(f => ({ ...f, project_id: projectId, brand: proj?.name ?? f.brand }))
   }
@@ -91,7 +95,7 @@ export default function ProductModal({ open, onClose, onSaved, product }: Props)
       const payload: Record<string, any> = {
         sku:           form.sku.trim(),
         name:          form.name.trim(),
-        project_id:    form.project_id || null,
+        project_id:    form.project_id !== '__none__' ? form.project_id : null,
         brand:         form.brand || null,
         category:      form.category || null,
         unit_cost:     form.unit_cost ? Number(form.unit_cost) : null,
@@ -137,7 +141,7 @@ export default function ProductModal({ open, onClose, onSaved, product }: Props)
                 <SelectValue placeholder="Select project — auto-fills brand" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">No project</SelectItem>
+                <SelectItem value="__none__">No project</SelectItem>
                 {projects.map(p => (
                   <SelectItem key={p.id} value={p.id}>
                     {p.name} <span className="text-muted-foreground font-mono text-xs ml-1">({p.code})</span>

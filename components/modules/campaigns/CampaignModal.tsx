@@ -26,7 +26,7 @@ const today = () => new Date().toISOString().slice(0, 10)
 const EMPTY = {
   name: '', platform: '', brand: '', budget: '', spent: '0',
   start_date: today(), end_date: '', status: 'Draft',
-  objective: 'Sales', target_product_id: '', notes: '',
+  objective: 'Sales', target_product_id: '__none__', notes: '',
 }
 
 export default function CampaignModal({ open, onClose, onSaved, campaign }: Props) {
@@ -47,7 +47,7 @@ export default function CampaignModal({ open, onClose, onSaved, campaign }: Prop
         end_date:          campaign.end_date ?? '',
         status:            campaign.status ?? 'Draft',
         objective:         campaign.objective ?? 'Sales',
-        target_product_id: campaign.target_product_id ?? '',
+        target_product_id: campaign.target_product_id ?? '__none__',
         notes:             campaign.notes ?? '',
       } : { ...EMPTY, start_date: today() })
     }
@@ -84,7 +84,7 @@ export default function CampaignModal({ open, onClose, onSaved, campaign }: Prop
         end_date:          form.end_date || null,
         status:            form.status,
         objective:         form.objective,
-        target_product_id: form.target_product_id || null,
+        target_product_id: form.target_product_id !== '__none__' ? form.target_product_id : null,
         notes:             form.notes.trim() || null,
       }
       if (campaign) {
@@ -190,7 +190,7 @@ export default function CampaignModal({ open, onClose, onSaved, campaign }: Prop
               <Select value={form.target_product_id} onValueChange={v => set('target_product_id', v)}>
                 <SelectTrigger><SelectValue placeholder="No specific product" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">No specific product</SelectItem>
+                  <SelectItem value="__none__">No specific product</SelectItem>
                   {products.map(p => (
                     <SelectItem key={p.id} value={p.id}>{p.sku} — {p.name}</SelectItem>
                   ))}

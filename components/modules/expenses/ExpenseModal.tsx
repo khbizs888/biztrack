@@ -26,7 +26,7 @@ interface Props {
 const today = () => new Date().toISOString().slice(0, 10)
 
 const EMPTY = {
-  date: today(), category: '', brand: '', amount: '',
+  date: today(), category: '', brand: '__none__', amount: '',
   description: '', payment_method: 'Bank Transfer', recurring: false,
 }
 
@@ -39,7 +39,7 @@ export default function ExpenseModal({ open, onClose, onSaved, expense }: Props)
       setForm(expense ? {
         date:           expense.date ?? today(),
         category:       expense.category ?? expense.type ?? '',
-        brand:          expense.brand ?? '',
+        brand:          expense.brand ?? '__none__',
         amount:         expense.amount?.toString() ?? '',
         description:    expense.description ?? expense.notes ?? '',
         payment_method: expense.payment_method ?? 'Bank Transfer',
@@ -65,7 +65,7 @@ export default function ExpenseModal({ open, onClose, onSaved, expense }: Props)
         date:           form.date,
         category:       form.category,
         type:           form.category, // backward compat
-        brand:          form.brand || null,
+        brand:          form.brand !== '__none__' ? form.brand : null,
         amount:         Number(form.amount),
         description:    form.description.trim() || null,
         notes:          form.description.trim() || null, // backward compat
@@ -126,7 +126,7 @@ export default function ExpenseModal({ open, onClose, onSaved, expense }: Props)
               <Select value={form.brand} onValueChange={v => set('brand', v)}>
                 <SelectTrigger><SelectValue placeholder="Company-wide" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Company-wide</SelectItem>
+                  <SelectItem value="__none__">Company-wide</SelectItem>
                   {BRANDS.map(b => <SelectItem key={b} value={b}>{b}</SelectItem>)}
                 </SelectContent>
               </Select>

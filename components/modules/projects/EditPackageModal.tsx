@@ -30,7 +30,7 @@ export default function EditPackageModal({ open, onClose, pkg, projectId, onSave
   const [code, setCode]         = useState('')
   const [price, setPrice]       = useState('')
   const [notes, setNotes]       = useState('')
-  const [productId, setProductId] = useState('')
+  const [productId, setProductId] = useState('__none__')
   const [products, setProducts] = useState<any[]>([])
 
   // Load products for this project when modal opens
@@ -53,7 +53,7 @@ export default function EditPackageModal({ open, onClose, pkg, projectId, onSave
       setCode(pkg.code)
       setPrice(String(pkg.price))
       setNotes(pkg.notes ?? '')
-      setProductId(pkg.product_id ?? '')
+      setProductId(pkg.product_id ?? '__none__')
     }
   }, [pkg])
 
@@ -75,7 +75,7 @@ export default function EditPackageModal({ open, onClose, pkg, projectId, onSave
       price:      parsedPrice,
       notes:      notes.trim() || undefined,
       customValues: pkg?.customValues,
-      product_id: productId || undefined,
+      product_id: productId !== '__none__' ? productId : undefined,
     })
     toast.success('Package updated')
     handleClose()
@@ -97,7 +97,7 @@ export default function EditPackageModal({ open, onClose, pkg, projectId, onSave
                   <SelectValue placeholder="Optional — link to a product" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">No product linked</SelectItem>
+                  <SelectItem value="__none__">No product linked</SelectItem>
                   {products.map(p => (
                     <SelectItem key={p.id} value={p.id}>
                       {p.sku} — {p.name}

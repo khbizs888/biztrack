@@ -31,7 +31,7 @@ export default function AddPackageModal({ open, onClose, projectId, projectCode,
   const [code, setCode]   = useState('')
   const [price, setPrice] = useState('')
   const [notes, setNotes] = useState('')
-  const [productId, setProductId] = useState('')
+  const [productId, setProductId] = useState('__none__')
   const [customValues, setCustomValues] = useState<Record<string, string>>({})
   const [products, setProducts] = useState<any[]>([])
 
@@ -50,7 +50,7 @@ export default function AddPackageModal({ open, onClose, projectId, projectCode,
 
   function handleClose() {
     setName(''); setCode(''); setPrice(''); setNotes('')
-    setProductId(''); setCustomValues({})
+    setProductId('__none__'); setCustomValues({})
     onClose()
   }
 
@@ -80,7 +80,7 @@ export default function AddPackageModal({ open, onClose, projectId, projectCode,
       price:        parsedPrice,
       notes:        notes.trim() || undefined,
       customValues: Object.keys(customValues).length > 0 ? customValues : undefined,
-      product_id:   productId || undefined,
+      product_id:   productId !== '__none__' ? productId : undefined,
     })
     toast.success(`Package "${trimName}" added`)
     handleClose()
@@ -102,7 +102,7 @@ export default function AddPackageModal({ open, onClose, projectId, projectCode,
                   <SelectValue placeholder="Optional — link to a product" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">No product linked</SelectItem>
+                  <SelectItem value="__none__">No product linked</SelectItem>
                   {products.map(p => (
                     <SelectItem key={p.id} value={p.id}>
                       {p.sku} — {p.name}
