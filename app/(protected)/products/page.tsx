@@ -15,9 +15,8 @@ import { formatCurrency } from '@/lib/utils'
 import { Plus, Package, Search, Pencil, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 
-const BRANDS = ['FIOR', 'NE', 'DD', 'KHH', 'Juji']
 const CATEGORIES = ['Supplements', 'Skincare', 'Health Drinks', 'Food', 'Other']
-const STATUSES = ['Active', 'Discontinued', 'Coming Soon']
+const STATUSES   = ['Active', 'Discontinued', 'Coming Soon']
 
 const STATUS_COLORS: Record<string, string> = {
   'Active':       'bg-green-100 text-green-700',
@@ -26,20 +25,34 @@ const STATUS_COLORS: Record<string, string> = {
 }
 
 export default function ProductsPage() {
-  const [products, setProducts] = useState<any[]>([])
-  const [loading, setLoading]   = useState(true)
-  const [search, setSearch]     = useState('')
-  const [brand, setBrand]       = useState('all')
-  const [category, setCategory] = useState('all')
-  const [status, setStatus]     = useState('all')
-  const [showModal, setShowModal]   = useState(false)
+  const [products, setProducts]   = useState<any[]>([])
+  const [projects, setProjects]   = useState<any[]>([])
+  const [loading, setLoading]     = useState(true)
+  const [search, setSearch]       = useState('')
+  const [projectId, setProjectId] = useState('all')
+  const [category, setCategory]   = useState('all')
+  const [status, setStatus]       = useState('all')
+  const [showModal, setShowModal]     = useState(false)
   const [editProduct, setEditProduct] = useState<any | null>(null)
+
+  // Load projects list once for the filter dropdown
+  useEffect(() => {
+    createClient()
+      .from('projects')
+      .select('id, name, code')
+      .order('name')
+      .then(({ data }) => setProjects(data ?? []))
+  }, [])
 
   const fetchProducts = useCallback(async () => {
     setLoading(true)
     const supabase = createClient()
-    let q = supabase.from('products').select('*').order('created_at', { ascending: false })
-    if (brand !== 'all')    q = q.eq('brand', brand)
+    // Join with projects to get project name/code for each product
+    let q = supabase
+      .from('products')
+      .select('*, projects(id, name, code)')
+      .order('created_at', { ascending: false })
+    if (projectId !== 'all') q = q.eq('project_id', projectId)
     if (category !== 'all') q = q.eq('category', category)
     if (status !== 'all')   q = q.eq('status', status)
     const { data, error } = await q
@@ -51,7 +64,7 @@ export default function ProductsPage() {
       : (data ?? [])
     setProducts(rows)
     setLoading(false)
-  }, [brand, category, status, search])
+  }, [projectId, category, status, search])
 
   useEffect(() => { fetchProducts() }, [fetchProducts])
 
@@ -85,11 +98,13 @@ export default function ProductsPage() {
             className="pl-9"
           />
         </div>
-        <Select value={brand} onValueChange={setBrand}>
-          <SelectTrigger className="w-[130px]"><SelectValue placeholder="Brand" /></SelectTrigger>
+        <Select value={projectId} onValueChange={setProjectId}>
+          <SelectTrigger className="w-[150px]"><SelectValue placeholder="Project" /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Brands</SelectItem>
-            {BRANDS.map(b => <SelectItem key={b} value={b}>{b}</SelectItem>)}
+            <SelectItem value="all">All Projects</SelectItem>
+            {projects.map(p => (
+              <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+            ))}
           </SelectContent>
         </Select>
         <Select value={category} onValueChange={setCategory}>
@@ -114,7 +129,7 @@ export default function ProductsPage() {
         <EmptyState
           icon={Package}
           title="No products found"
-          description="Add your first product to get started."
+          description="Add your first product and link it to a project."
           action={{ label: 'Add Product', onClick: openAdd }}
         />
       ) : (
@@ -124,7 +139,7 @@ export default function ProductsPage() {
               <TableRow>
                 <TableHead>SKU</TableHead>
                 <TableHead>Name</TableHead>
-                <TableHead>Brand</TableHead>
+                <TableHead>Project</TableHead>
                 <TableHead>Category</TableHead>
                 <TableHead className="text-right">Unit Cost</TableHead>
                 <TableHead className="text-right">Selling Price</TableHead>
@@ -134,51 +149,58 @@ export default function ProductsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {products.map(p => (
-                <TableRow key={p.id}>
-                  <TableCell>
-                    <span className="font-mono text-xs bg-gray-100 px-1.5 py-0.5 rounded">
-                      {p.sku}
-                    </span>
-                  </TableCell>
-                  <TableCell className="font-medium">{p.name}</TableCell>
-                  <TableCell>
-                    {p.brand ? <Badge variant="outline">{p.brand}</Badge> : '—'}
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {p.category ?? '—'}
-                  </TableCell>
-                  <TableCell className="text-right text-sm">
-                    {p.unit_cost != null ? formatCurrency(Number(p.unit_cost)) : '—'}
-                  </TableCell>
-                  <TableCell className="text-right text-sm font-medium">
-                    {p.selling_price != null ? formatCurrency(Number(p.selling_price)) : '—'}
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {Array.isArray(p.platform) && p.platform.length > 0
-                      ? p.platform.join(', ')
-                      : '—'}
-                  </TableCell>
-                  <TableCell>
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[p.status] ?? 'bg-gray-100 text-gray-700'}`}>
-                      {p.status ?? 'Active'}
-                    </span>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex gap-1 justify-end">
-                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(p)}>
-                        <Pencil className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button
-                        variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive"
-                        onClick={() => handleDelete(p.id)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
+              {products.map(p => {
+                const proj = p.projects as { id: string; name: string; code: string } | null
+                return (
+                  <TableRow key={p.id}>
+                    <TableCell>
+                      <span className="font-mono text-xs bg-gray-100 px-1.5 py-0.5 rounded">
+                        {p.sku}
+                      </span>
+                    </TableCell>
+                    <TableCell className="font-medium">{p.name}</TableCell>
+                    <TableCell>
+                      {proj
+                        ? <Badge variant="outline">{proj.name}</Badge>
+                        : p.brand
+                          ? <span className="text-xs text-muted-foreground">{p.brand}</span>
+                          : '—'}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {p.category ?? '—'}
+                    </TableCell>
+                    <TableCell className="text-right text-sm">
+                      {p.unit_cost != null ? formatCurrency(Number(p.unit_cost)) : '—'}
+                    </TableCell>
+                    <TableCell className="text-right text-sm font-medium">
+                      {p.selling_price != null ? formatCurrency(Number(p.selling_price)) : '—'}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {Array.isArray(p.platform) && p.platform.length > 0
+                        ? p.platform.join(', ')
+                        : '—'}
+                    </TableCell>
+                    <TableCell>
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[p.status] ?? 'bg-gray-100 text-gray-700'}`}>
+                        {p.status ?? 'Active'}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex gap-1 justify-end">
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(p)}>
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive"
+                          onClick={() => handleDelete(p.id)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
             </TableBody>
           </Table>
         </div>

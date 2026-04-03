@@ -30,6 +30,7 @@ export interface Package {
   code: string
   price: number
   notes?: string
+  product_id?: string
   customValues: Record<string, string>
   createdAt: string
 }
@@ -236,7 +237,7 @@ export function useProjects() {
 
   const addPackage = useCallback(async (
     projectId: string,
-    data: { name: string; code: string; price: number; notes?: string; customValues?: Record<string, string> }
+    data: { name: string; code: string; price: number; notes?: string; customValues?: Record<string, string>; product_id?: string }
   ) => {
     const tempId = 'temp_' + crypto.randomUUID()
     const optimistic: Package = {
@@ -246,6 +247,7 @@ export function useProjects() {
       code: data.code.toUpperCase(),
       price: data.price,
       notes: data.notes,
+      product_id: data.product_id,
       customValues: data.customValues ?? {},
       createdAt: new Date().toISOString(),
     }
@@ -259,7 +261,7 @@ export function useProjects() {
 
     try {
       const created = await createPackageAction(
-        projectId, data.name, data.code, data.price, data.notes, data.customValues
+        projectId, data.name, data.code, data.price, data.notes, data.customValues, data.product_id
       )
       setProjects(prev => {
         const next = prev.map(p =>
@@ -288,7 +290,7 @@ export function useProjects() {
   const updatePackage = useCallback(async (
     projectId: string,
     packageId: string,
-    data: { name: string; code: string; price: number; notes?: string; customValues?: Record<string, string> }
+    data: { name: string; code: string; price: number; notes?: string; customValues?: Record<string, string>; product_id?: string }
   ) => {
     const prev_snapshot = projects
     setProjects(prev => {
@@ -304,6 +306,7 @@ export function useProjects() {
                       code: data.code.toUpperCase(),
                       price: data.price,
                       notes: data.notes,
+                      product_id: data.product_id ?? pkg.product_id,
                       customValues: data.customValues ?? pkg.customValues,
                     }
                   : pkg
@@ -316,7 +319,7 @@ export function useProjects() {
     })
 
     try {
-      await updatePackageAction(packageId, data.name, data.code, data.price, data.notes, data.customValues)
+      await updatePackageAction(packageId, data.name, data.code, data.price, data.notes, data.customValues, data.product_id)
     } catch {
       sync(prev_snapshot)
       toast.error('Failed to update package')

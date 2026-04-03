@@ -1,30 +1,56 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { CustomField } from '@/lib/hooks/useProjects'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
 
 interface Props {
   open: boolean
   onClose: () => void
+  projectId: string
   projectCode: string
   customFields?: CustomField[]
-  onAdd: (data: { name: string; code: string; price: number; notes?: string; customValues?: Record<string, string> }) => void
+  onAdd: (data: {
+    name: string
+    code: string
+    price: number
+    notes?: string
+    customValues?: Record<string, string>
+    product_id?: string
+  }) => void
 }
 
-export default function AddPackageModal({ open, onClose, projectCode, customFields = [], onAdd }: Props) {
+export default function AddPackageModal({ open, onClose, projectId, projectCode, customFields = [], onAdd }: Props) {
   const [name, setName]   = useState('')
   const [code, setCode]   = useState('')
   const [price, setPrice] = useState('')
   const [notes, setNotes] = useState('')
+  const [productId, setProductId] = useState('')
   const [customValues, setCustomValues] = useState<Record<string, string>>({})
+  const [products, setProducts] = useState<any[]>([])
+
+  // Load products for this project whenever the modal opens
+  useEffect(() => {
+    if (open && projectId) {
+      createClient()
+        .from('products')
+        .select('id, sku, name')
+        .eq('project_id', projectId)
+        .eq('status', 'Active')
+        .order('name')
+        .then(({ data }) => setProducts(data ?? []))
+    }
+  }, [open, projectId])
 
   function handleClose() {
-    setName(''); setCode(''); setPrice(''); setNotes(''); setCustomValues({})
+    setName(''); setCode(''); setPrice(''); setNotes('')
+    setProductId(''); setCustomValues({})
     onClose()
   }
 
@@ -34,8 +60,8 @@ export default function AddPackageModal({ open, onClose, projectCode, customFiel
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    const trimName  = name.trim()
-    const trimCode  = code.trim().toUpperCase()
+    const trimName    = name.trim()
+    const trimCode    = code.trim().toUpperCase()
     const parsedPrice = parseFloat(price)
     if (!trimName)                             { toast.error('Package name is required'); return }
     if (!trimCode)                             { toast.error('Package code is required'); return }
@@ -49,11 +75,12 @@ export default function AddPackageModal({ open, onClose, projectCode, customFiel
     }
 
     onAdd({
-      name: trimName,
-      code: trimCode,
-      price: parsedPrice,
-      notes: notes.trim() || undefined,
+      name:         trimName,
+      code:         trimCode,
+      price:        parsedPrice,
+      notes:        notes.trim() || undefined,
       customValues: Object.keys(customValues).length > 0 ? customValues : undefined,
+      product_id:   productId || undefined,
     })
     toast.success(`Package "${trimName}" added`)
     handleClose()
@@ -66,7 +93,28 @@ export default function AddPackageModal({ open, onClose, projectCode, customFiel
           <DialogTitle>Add Package</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* ── Standard fields ── */}
+          {/* Product link */}
+          {products.length > 0 && (
+            <div className="space-y-1">
+              <Label>Linked Product</Label>
+              <Select value={productId} onValueChange={setProductId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Optional — link to a product" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">No product linked</SelectItem>
+                  {products.map(p => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.sku} — {p.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">Links this package to a product from the catalog</p>
+            </div>
+          )}
+
+          {/* Standard fields */}
           <div className="space-y-1">
             <Label>Package Name <span className="text-red-500">*</span></Label>
             <Input
@@ -89,24 +137,19 @@ export default function AddPackageModal({ open, onClose, projectCode, customFiel
           <div className="space-y-1">
             <Label>Price (RM) <span className="text-red-500">*</span></Label>
             <Input
-              type="number"
-              step="0.01"
-              min="0"
-              placeholder="0.00"
-              value={price}
-              onChange={e => setPrice(e.target.value)}
+              type="number" step="0.01" min="0" placeholder="0.00"
+              value={price} onChange={e => setPrice(e.target.value)}
             />
           </div>
           <div className="space-y-1">
             <Label>Notes</Label>
             <Input
               placeholder="Optional notes"
-              value={notes}
-              onChange={e => setNotes(e.target.value)}
+              value={notes} onChange={e => setNotes(e.target.value)}
             />
           </div>
 
-          {/* ── Custom fields ── */}
+          {/* Custom fields */}
           {customFields.length > 0 && (
             <div className="border-t pt-4 space-y-4">
               {customFields.map(field => (
@@ -115,7 +158,6 @@ export default function AddPackageModal({ open, onClose, projectCode, customFiel
                     {field.label}
                     {field.required && <span className="text-red-500 ml-1">*</span>}
                   </Label>
-
                   {field.type === 'boolean' ? (
                     <div className="flex items-center gap-2 h-9">
                       <input

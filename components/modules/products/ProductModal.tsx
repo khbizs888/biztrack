@@ -9,7 +9,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
 
-const BRANDS     = ['FIOR', 'NE', 'DD', 'KHH', 'Juji']
 const CATEGORIES = ['Supplements', 'Skincare', 'Health Drinks', 'Food', 'Other']
 const PLATFORMS  = ['Own Website', 'Shopee', 'Lazada', 'TikTok', 'WhatsApp']
 const STATUSES   = ['Active', 'Discontinued', 'Coming Soon']
@@ -22,20 +21,34 @@ interface Props {
 }
 
 const EMPTY = {
-  sku: '', name: '', brand: '', category: '',
+  sku: '', name: '', project_id: '', brand: '', category: '',
   unit_cost: '', selling_price: '', weight_g: '',
   platform: [] as string[], status: 'Active', description: '',
 }
 
 export default function ProductModal({ open, onClose, onSaved, product }: Props) {
-  const [form, setForm]   = useState(EMPTY)
-  const [saving, setSaving] = useState(false)
+  const [form, setForm]       = useState(EMPTY)
+  const [projects, setProjects] = useState<any[]>([])
+  const [saving, setSaving]   = useState(false)
 
+  // Load projects for the dropdown
+  useEffect(() => {
+    if (open) {
+      createClient()
+        .from('projects')
+        .select('id, name, code')
+        .order('name')
+        .then(({ data }) => setProjects(data ?? []))
+    }
+  }, [open])
+
+  // Populate form when editing or reset when adding
   useEffect(() => {
     if (open) {
       setForm(product ? {
         sku:           product.sku ?? '',
         name:          product.name ?? '',
+        project_id:    product.project_id ?? '',
         brand:         product.brand ?? '',
         category:      product.category ?? '',
         unit_cost:     product.unit_cost?.toString() ?? '',
@@ -47,6 +60,11 @@ export default function ProductModal({ open, onClose, onSaved, product }: Props)
       } : EMPTY)
     }
   }, [open, product])
+
+  function handleProjectChange(projectId: string) {
+    const proj = projects.find(p => p.id === projectId)
+    setForm(f => ({ ...f, project_id: projectId, brand: proj?.name ?? f.brand }))
+  }
 
   function togglePlatform(p: string) {
     setForm(f => ({
@@ -73,6 +91,7 @@ export default function ProductModal({ open, onClose, onSaved, product }: Props)
       const payload: Record<string, any> = {
         sku:           form.sku.trim(),
         name:          form.name.trim(),
+        project_id:    form.project_id || null,
         brand:         form.brand || null,
         category:      form.category || null,
         unit_cost:     form.unit_cost ? Number(form.unit_cost) : null,
@@ -110,6 +129,27 @@ export default function ProductModal({ open, onClose, onSaved, product }: Props)
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Project / Brand */}
+          <div className="space-y-1.5">
+            <Label>Project (Brand)</Label>
+            <Select value={form.project_id} onValueChange={handleProjectChange}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select project — auto-fills brand" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">No project</SelectItem>
+                {projects.map(p => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.name} <span className="text-muted-foreground font-mono text-xs ml-1">({p.code})</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {form.brand && (
+              <p className="text-xs text-muted-foreground">Brand auto-set to: <strong>{form.brand}</strong></p>
+            )}
+          </div>
+
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>SKU *</Label>
@@ -131,39 +171,31 @@ export default function ProductModal({ open, onClose, onSaved, product }: Props)
             <Input value={form.name} onChange={e => set('name', e.target.value)} placeholder="Product name" />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Brand</Label>
-              <Select value={form.brand} onValueChange={v => set('brand', v)}>
-                <SelectTrigger><SelectValue placeholder="Select brand" /></SelectTrigger>
-                <SelectContent>
-                  {BRANDS.map(b => <SelectItem key={b} value={b}>{b}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Category</Label>
-              <Select value={form.category} onValueChange={v => set('category', v)}>
-                <SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger>
-                <SelectContent>
-                  {CATEGORIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
+          <div className="space-y-1.5">
+            <Label>Category</Label>
+            <Select value={form.category} onValueChange={v => set('category', v)}>
+              <SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger>
+              <SelectContent>
+                {CATEGORIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+              </SelectContent>
+            </Select>
           </div>
 
           <div className="grid grid-cols-3 gap-3">
             <div className="space-y-1.5">
               <Label>Unit Cost (RM)</Label>
-              <Input type="number" step="0.01" min="0" value={form.unit_cost} onChange={e => set('unit_cost', e.target.value)} placeholder="0.00" />
+              <Input type="number" step="0.01" min="0" value={form.unit_cost}
+                onChange={e => set('unit_cost', e.target.value)} placeholder="0.00" />
             </div>
             <div className="space-y-1.5">
               <Label>Selling Price (RM)</Label>
-              <Input type="number" step="0.01" min="0" value={form.selling_price} onChange={e => set('selling_price', e.target.value)} placeholder="0.00" />
+              <Input type="number" step="0.01" min="0" value={form.selling_price}
+                onChange={e => set('selling_price', e.target.value)} placeholder="0.00" />
             </div>
             <div className="space-y-1.5">
               <Label>Weight (g)</Label>
-              <Input type="number" step="0.1" min="0" value={form.weight_g} onChange={e => set('weight_g', e.target.value)} placeholder="0" />
+              <Input type="number" step="0.1" min="0" value={form.weight_g}
+                onChange={e => set('weight_g', e.target.value)} placeholder="0" />
             </div>
           </div>
 

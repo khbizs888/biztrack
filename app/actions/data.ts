@@ -521,6 +521,7 @@ function mapDbPackage(pkg: any) {
     code:         pkg.code ?? '',
     price:        Number(pkg.price ?? 0),
     notes:        (notes as string) ?? '',
+    product_id:   pkg.product_id ?? null,
     customValues,
     createdAt:    pkg.created_at ?? new Date().toISOString(),
   })
@@ -620,6 +621,7 @@ export async function createPackageAction(
   price: number,
   notes?: string,
   customValues?: Record<string, string>,
+  product_id?: string,
 ) {
   // Admin client bypasses the packages_insert RLS policy (which requires
   // is_admin() on the user JWT — not available in all session contexts).
@@ -634,6 +636,7 @@ export async function createPackageAction(
     custom_attributes: customAttrs,
     is_active:         true,
     sort_order:        0,
+    product_id:        product_id ?? null,
   }
 
   // ── Attempt 1: upsert on (project_id, code) ───────────────────────────────
@@ -763,6 +766,7 @@ export async function updatePackageAction(
   price: number,
   notes?: string,
   customValues?: Record<string, string>,
+  product_id?: string,
 ) {
   const sb = createAdminClient()
 
@@ -771,6 +775,7 @@ export async function updatePackageAction(
     code:              code || null,
     price,
     custom_attributes: { notes: notes ?? '', ...(customValues ?? {}) },
+    product_id:        product_id ?? null,
   }
 
   console.log('[updatePackageAction] updating id=%s payload:', id, JSON.stringify(fullPayload))

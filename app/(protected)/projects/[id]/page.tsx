@@ -506,6 +506,7 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
       <AddPackageModal
         open={showAddPkg}
         onClose={() => setShowAddPkg(false)}
+        projectId={id}
         projectCode={project.code}
         customFields={customFields}
         onAdd={data => addPackage(id, data)}
@@ -523,9 +524,9 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
         open={!!editingPkg}
         onClose={() => setEditingPkg(null)}
         pkg={editingPkg}
+        projectId={id}
         onSave={data => {
           if (editingPkg) {
-            // Preserve existing customValues since EditPackageModal doesn't manage them yet
             updatePackage(id, editingPkg.id, {
               ...data,
               customValues: editingPkg.customValues,
