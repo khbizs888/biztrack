@@ -9,55 +9,67 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
 
+const BRANDS = ['FIOR', 'NE', 'DD', 'KHH', 'Juji']
 const MOVEMENT_TYPES = ['Stock In', 'Stock Out', 'Adjustment']
+
+interface Component {
+  json_key: string
+  display_name: string
+  unit: string
+}
 
 interface Props {
   open: boolean
   onClose: () => void
   onSaved: () => void
-  preselectedProduct?: any | null
+  preselectedBrand?: string | null
+  preselectedComponent?: string | null
 }
 
 const today = () => new Date().toISOString().slice(0, 10)
 
-export default function StockMovementModal({ open, onClose, onSaved, preselectedProduct }: Props) {
-  const [products, setProducts]     = useState<any[]>([])
+export default function StockMovementModal({
+  open, onClose, onSaved, preselectedBrand, preselectedComponent,
+}: Props) {
+  const [components, setComponents] = useState<Component[]>([])
   const [form, setForm] = useState({
-    product_id: '', type: 'Stock In', quantity: '', reference: '', notes: '', date: today(),
+    brand: '', component_key: '__none__', type: 'Stock In',
+    quantity: '', reference: '', notes: '', date: today(),
   })
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     if (open) {
-      loadProducts()
-      setForm(f => ({
-        ...f,
-        date:       today(),
-        quantity:   '',
-        reference:  '',
-        notes:      '',
-        type:       'Stock In',
-        product_id: preselectedProduct?.product_id ?? '',
-      }))
+      const brand = preselectedBrand ?? ''
+      const component_key = preselectedComponent ?? '__none__'
+      setForm({ brand, component_key, type: 'Stock In', quantity: '', reference: '', notes: '', date: today() })
+      if (brand) loadComponents(brand)
+      else setComponents([])
     }
-  }, [open, preselectedProduct])
+  }, [open, preselectedBrand, preselectedComponent])
 
-  async function loadProducts() {
+  async function loadComponents(brand: string) {
     const { data } = await createClient()
-      .from('products')
-      .select('id, sku, name')
-      .order('name', { ascending: true })
-    setProducts(data ?? [])
+      .from('component_registry')
+      .select('json_key, display_name, unit')
+      .eq('brand', brand)
+      .order('display_name')
+    setComponents(data ?? [])
   }
 
   function set(key: string, val: string) {
     setForm(f => ({ ...f, [key]: val }))
   }
 
+  function handleBrandChange(brand: string) {
+    setForm(f => ({ ...f, brand, component_key: '__none__' }))
+    loadComponents(brand)
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!form.product_id || !form.quantity) {
-      toast.error('Product and Quantity are required')
+    if (!form.brand || form.component_key === '__none__' || !form.quantity) {
+      toast.error('Brand, Component and Quantity are required')
       return
     }
     const qty = parseInt(form.quantity, 10)
@@ -67,14 +79,14 @@ export default function StockMovementModal({ open, onClose, onSaved, preselected
     }
     setSaving(true)
     try {
-      const supabase = createClient()
-      const { error } = await supabase.from('inventory').insert({
-        product_id: form.product_id,
-        type:       form.type,
-        quantity:   qty,
-        reference:  form.reference.trim() || null,
-        notes:      form.notes.trim() || null,
-        date:       form.date,
+      const { error } = await createClient().from('inventory').insert({
+        brand:         form.brand,
+        component_key: form.component_key,
+        type:          form.type,
+        quantity:      qty,
+        reference:     form.reference.trim() || null,
+        notes:         form.notes.trim() || null,
+        date:          form.date,
       })
       if (error) throw error
       toast.success('Stock movement recorded')
@@ -87,6 +99,8 @@ export default function StockMovementModal({ open, onClose, onSaved, preselected
     }
   }
 
+  const selectedComponent = components.find(c => c.json_key === form.component_key)
+
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
       <DialogContent className="max-w-md">
@@ -95,14 +109,34 @@ export default function StockMovementModal({ open, onClose, onSaved, preselected
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Brand */}
           <div className="space-y-1.5">
-            <Label>Product *</Label>
-            <Select value={form.product_id} onValueChange={v => set('product_id', v)}>
-              <SelectTrigger><SelectValue placeholder="Select product" /></SelectTrigger>
+            <Label>Brand *</Label>
+            <Select value={form.brand || '__none__'} onValueChange={v => handleBrandChange(v === '__none__' ? '' : v)}>
+              <SelectTrigger><SelectValue placeholder="Select brand" /></SelectTrigger>
               <SelectContent>
-                {products.map(p => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.sku} — {p.name}
+                <SelectItem value="__none__">Select brand…</SelectItem>
+                {BRANDS.map(b => <SelectItem key={b} value={b}>{b}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Component */}
+          <div className="space-y-1.5">
+            <Label>Component *</Label>
+            <Select
+              value={form.component_key}
+              onValueChange={v => set('component_key', v)}
+              disabled={!form.brand || components.length === 0}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder={form.brand ? 'Select component' : 'Pick brand first'} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">Select component…</SelectItem>
+                {components.map(c => (
+                  <SelectItem key={c.json_key} value={c.json_key}>
+                    {c.display_name} <span className="text-muted-foreground">({c.unit})</span>
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -120,11 +154,16 @@ export default function StockMovementModal({ open, onClose, onSaved, preselected
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label>Quantity *</Label>
+              <Label>
+                Quantity *
+                {selectedComponent && (
+                  <span className="text-muted-foreground font-normal ml-1">({selectedComponent.unit})</span>
+                )}
+              </Label>
               <Input
                 type="number" min="-9999" value={form.quantity}
                 onChange={e => set('quantity', e.target.value)}
-                placeholder={form.type === 'Adjustment' ? 'e.g. -5 or +10' : 'Units'}
+                placeholder={form.type === 'Adjustment' ? 'e.g. -5 or +10' : 'Amount'}
               />
             </div>
           </div>

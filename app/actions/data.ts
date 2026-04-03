@@ -356,6 +356,58 @@ export async function bulkUpsertCustomers(rows: { name: string; phone: string; a
 }
 
 // ─────────────────────────────────────────────
+// INVENTORY — Auto-deduct components from order
+// ─────────────────────────────────────────────
+
+export async function deductInventoryForOrder(
+  packageId: string,
+  orderQuantity: number = 1
+): Promise<void> {
+  const sb = createAdminClient()
+
+  // Fetch package custom_attributes and project brand name
+  const { data: pkg } = await sb
+    .from('packages')
+    .select('custom_attributes, projects(name)')
+    .eq('id', packageId)
+    .single()
+
+  if (!pkg) return
+
+  const brand = (pkg.projects as any)?.name as string | undefined
+  if (!brand) return
+
+  const attrs = (pkg.custom_attributes ?? {}) as Record<string, string>
+
+  // Get valid component keys for this brand
+  const { data: components } = await sb
+    .from('component_registry')
+    .select('json_key')
+    .eq('brand', brand)
+
+  if (!components?.length) return
+
+  const validKeys = new Set(components.map((c: any) => c.json_key))
+  const today = new Date().toISOString().slice(0, 10)
+
+  const deductions = Object.entries(attrs)
+    .filter(([key, val]) => validKeys.has(key) && Number(val) > 0)
+    .map(([key, val]) => ({
+      brand,
+      component_key: key,
+      type:          'Stock Out',
+      quantity:      Number(val) * orderQuantity,
+      date:          today,
+      notes:         'Auto-deducted from order',
+    }))
+
+  if (deductions.length > 0) {
+    // Best-effort — silently ignore errors so the order is never blocked
+    await sb.from('inventory').insert(deductions)
+  }
+}
+
+// ─────────────────────────────────────────────
 // WRITE — Orders
 // ─────────────────────────────────────────────
 
@@ -376,6 +428,15 @@ export async function createOrder(payload: {
   const sb = createAdminClient()
   const { error } = await sb.from('orders').insert(payload)
   if (error) throw new Error(error.message)
+
+  // Auto-deduct BOM components when a package is selected
+  if (payload.package_id) {
+    try {
+      await deductInventoryForOrder(payload.package_id, 1)
+    } catch {
+      // Inventory deduction is best-effort — never fail the order
+    }
+  }
 }
 
 export async function bulkCreateOrders(rows: object[]) {
