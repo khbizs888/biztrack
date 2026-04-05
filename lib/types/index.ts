@@ -44,6 +44,19 @@ export interface Order {
   channel: string | null
   purchase_reason: string | null
   is_new_customer: boolean
+  // Production-ready fields (migration 011)
+  package_snapshot: { name?: string; price?: number; code?: string } | null
+  cost_price: number | null
+  profit: number | null
+  import_status: string | null
+  import_error: string | null
+  tracking_number: string | null
+  shipping_fee: number | null
+  handling_fee: number | null
+  is_cod: boolean | null
+  payment_status: string | null
+  settled_at: string | null
+  quantity: number | null
   customers?: Customer
   projects?: Project
   packages?: Pick<Package, 'id' | 'name' | 'code'>

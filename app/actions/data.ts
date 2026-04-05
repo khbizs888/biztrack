@@ -426,15 +426,20 @@ export async function createOrder(payload: {
   is_new_customer: boolean
 }) {
   const sb = createAdminClient()
-  const { error } = await sb.from('orders').insert(payload)
+  const { data: inserted, error } = await sb
+    .from('orders')
+    .insert(payload)
+    .select('id')
+    .single()
   if (error) throw new Error(error.message)
 
-  // Auto-deduct BOM components when a package is selected
-  if (payload.package_id) {
+  // Run processOrder to set snapshot, profit, and deduct inventory
+  if (inserted?.id) {
     try {
-      await deductInventoryForOrder(payload.package_id, 1)
+      const { processOrder } = await import('./order-processing')
+      await processOrder(inserted.id)
     } catch {
-      // Inventory deduction is best-effort — never fail the order
+      // processOrder is best-effort — never fail the order creation
     }
   }
 }
@@ -448,6 +453,50 @@ export async function bulkCreateOrders(rows: object[]) {
     else success += data?.length ?? 0
   }
   return { success, fail }
+}
+
+export async function fetchExistingTrackingNumbers(trackingNumbers: string[]): Promise<string[]> {
+  if (trackingNumbers.length === 0) return []
+  const sb = createAdminClient()
+  const { data } = await sb
+    .from('orders')
+    .select('tracking_number')
+    .in('tracking_number', trackingNumbers)
+  return (data ?? [])
+    .map((o: { tracking_number: string | null }) => o.tracking_number)
+    .filter((t): t is string => t !== null)
+}
+
+export async function bulkInsertOrders(
+  rows: object[]
+): Promise<{ ids: string[]; errors: string[] }> {
+  const sb = createAdminClient()
+  const ids: string[] = []
+  const errors: string[] = []
+
+  for (let i = 0; i < rows.length; i += 50) {
+    const batch = rows.slice(i, i + 50)
+    const { data, error } = await sb.from('orders').insert(batch).select('id')
+    if (error) {
+      errors.push(`Batch ${Math.floor(i / 50) + 1}: ${error.message}`)
+    } else {
+      data?.forEach((o: { id: string }) => ids.push(o.id))
+    }
+  }
+
+  return { ids, errors }
+}
+
+export async function fetchActivePackages(): Promise<
+  Array<{ id: string; project_id: string; name: string; code: string | null }>
+> {
+  const sb = createAdminClient()
+  const { data, error } = await sb
+    .from('packages')
+    .select('id, project_id, name, code')
+    .eq('is_active', true)
+  if (error) throw new Error(error.message)
+  return plain(data ?? []) as Array<{ id: string; project_id: string; name: string; code: string | null }>
 }
 
 export async function updateOrderStatus(id: string, status: string) {

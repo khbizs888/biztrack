@@ -32,7 +32,8 @@ const NAV: NavGroup[] = [
     label: 'Reports', icon: BarChart2,
     children: [
       { label: 'Customer Data', href: '/customers' },
-      { label: 'Sales Report',  href: '/analytics' },
+      { label: 'Sales Report',  href: '/sales-report' },
+      { label: 'Analytics',     href: '/analytics' },
     ],
   },
   {
