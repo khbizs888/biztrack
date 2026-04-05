@@ -58,6 +58,19 @@ export async function fetchProjectSales(): Promise<Record<string, number>> {
 }
 
 // ─────────────────────────────────────────────
+// WRITE — Payment confirmation
+// ─────────────────────────────────────────────
+
+export async function confirmPayment(orderId: string) {
+  const sb = createAdminClient()
+  const { error } = await sb
+    .from('orders')
+    .update({ payment_status: 'Settled', settled_at: new Date().toISOString() })
+    .eq('id', orderId)
+  if (error) throw new Error(error.message)
+}
+
+// ─────────────────────────────────────────────
 // READ — Products & Packages
 // ─────────────────────────────────────────────
 

@@ -1,14 +1,16 @@
 'use client'
 
-import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useState, useTransition } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
+import { confirmPayment } from '@/app/actions/data'
 import PageHeader from '@/components/shared/PageHeader'
 import StatCard from '@/components/shared/StatCard'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Button } from '@/components/ui/button'
 import {
   AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -17,7 +19,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { subDays, eachDayOfInterval, parseISO, format } from 'date-fns'
-import { DollarSign, TrendingUp, ShoppingCart, BarChart2 } from 'lucide-react'
+import { DollarSign, TrendingUp, ShoppingCart, BarChart2, CheckCircle, Clock } from 'lucide-react'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -30,18 +32,46 @@ interface SalesOrder {
   package_snapshot: { name?: string; price?: number; code?: string } | null
   package_name: string | null
   status: string
+  payment_status: string | null
   customers: { name: string } | null
   projects: { name: string; code: string } | null
+}
+
+type PaymentFilter = 'all' | 'Settled' | 'Pending'
+
+// ─── Confirm Payment button (needs useTransition) ────────────────────────────
+
+function ConfirmPaymentButton({ orderId, onConfirmed }: { orderId: string; onConfirmed: () => void }) {
+  const [isPending, startTransition] = useTransition()
+
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      className="text-xs h-7 border-yellow-400 text-yellow-700 hover:bg-yellow-50"
+      disabled={isPending}
+      onClick={() => {
+        startTransition(async () => {
+          await confirmPayment(orderId)
+          onConfirmed()
+        })
+      }}
+    >
+      {isPending ? 'Confirming…' : 'Confirm Payment'}
+    </Button>
+  )
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function SalesReportPage() {
   const supabase = createClient()
+  const queryClient = useQueryClient()
 
   const [dateFrom, setDateFrom] = useState(subDays(new Date(), 29).toISOString().split('T')[0])
   const [dateTo,   setDateTo]   = useState(new Date().toISOString().split('T')[0])
   const [projectId, setProjectId] = useState('')
+  const [paymentFilter, setPaymentFilter] = useState<PaymentFilter>('all')
 
   // Fetch projects for filter
   const { data: projects = [] } = useQuery({
@@ -58,7 +88,7 @@ export default function SalesReportPage() {
     queryFn: async () => {
       let q = supabase
         .from('orders')
-        .select('id, order_date, total_price, cost_price, profit, package_snapshot, package_name, status, customers(name), projects(name, code)')
+        .select('id, order_date, total_price, cost_price, profit, package_snapshot, package_name, status, payment_status, customers(name), projects(name, code)')
         .gte('order_date', dateFrom)
         .lte('order_date', dateTo)
         .neq('status', 'cancelled')
@@ -71,12 +101,18 @@ export default function SalesReportPage() {
       const safeOrders = (orders ?? []) as unknown as SalesOrder[]
 
       // Summary stats
-      const totalRevenue   = safeOrders.reduce((s, o) => s + Number(o.total_price), 0)
-      const totalProfit    = safeOrders.reduce((s, o) => s + Number(o.profit ?? 0), 0)
-      const totalOrders    = safeOrders.length
-      const avgProfit      = totalOrders > 0 ? totalProfit / totalOrders : 0
+      const totalRevenue    = safeOrders.reduce((s, o) => s + Number(o.total_price), 0)
+      const totalProfit     = safeOrders.reduce((s, o) => s + Number(o.profit ?? 0), 0)
+      const totalOrders     = safeOrders.length
+      const avgProfit       = totalOrders > 0 ? totalProfit / totalOrders : 0
+      const settledSales    = safeOrders
+        .filter(o => o.payment_status === 'Settled')
+        .reduce((s, o) => s + Number(o.total_price), 0)
+      const unsettledSales  = safeOrders
+        .filter(o => o.payment_status === 'Pending')
+        .reduce((s, o) => s + Number(o.total_price), 0)
 
-      // Daily profit trend (last 30 days)
+      // Daily profit trend
       const days = eachDayOfInterval({
         start: parseISO(dateFrom),
         end:   parseISO(dateTo),
@@ -91,9 +127,21 @@ export default function SalesReportPage() {
         }
       })
 
-      return { orders: safeOrders, totalRevenue, totalProfit, totalOrders, avgProfit, byDay }
+      return { orders: safeOrders, totalRevenue, totalProfit, totalOrders, avgProfit, settledSales, unsettledSales, byDay }
     },
   })
+
+  // Apply payment filter to displayed orders
+  const displayedOrders = (salesData?.orders ?? []).filter(o => {
+    if (paymentFilter === 'all') return true
+    if (paymentFilter === 'Settled') return o.payment_status === 'Settled'
+    if (paymentFilter === 'Pending') return o.payment_status === 'Pending'
+    return true
+  })
+
+  // Recalculate summary for filtered view
+  const filteredRevenue = displayedOrders.reduce((s, o) => s + Number(o.total_price), 0)
+  const filteredProfit  = displayedOrders.reduce((s, o) => s + Number(o.profit ?? 0), 0)
 
   const interval = Math.max(1, Math.floor((salesData?.byDay.length ?? 1) / 6))
 
@@ -135,19 +183,32 @@ export default function SalesReportPage() {
             </SelectContent>
           </Select>
         </div>
+        <div>
+          <Label className="text-xs mb-1 block">Payment Status</Label>
+          <Select value={paymentFilter} onValueChange={v => setPaymentFilter(v as PaymentFilter)}>
+            <SelectTrigger className="w-44">
+              <SelectValue placeholder="All Orders" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Orders</SelectItem>
+              <SelectItem value="Settled">Settled</SelectItem>
+              <SelectItem value="Pending">Unsettled (Pending)</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       {/* ── Summary cards ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
         <StatCard
           title="Total Revenue"
-          value={salesData?.totalRevenue ?? 0}
+          value={paymentFilter === 'all' ? (salesData?.totalRevenue ?? 0) : filteredRevenue}
           isCurrency
           icon={DollarSign}
         />
         <StatCard
           title="Total Profit"
-          value={salesData?.totalProfit ?? 0}
+          value={paymentFilter === 'all' ? (salesData?.totalProfit ?? 0) : filteredProfit}
           isCurrency
           icon={TrendingUp}
           description={
@@ -158,7 +219,7 @@ export default function SalesReportPage() {
         />
         <StatCard
           title="Total Orders"
-          value={salesData?.totalOrders ?? 0}
+          value={paymentFilter === 'all' ? (salesData?.totalOrders ?? 0) : displayedOrders.length}
           icon={ShoppingCart}
         />
         <StatCard
@@ -166,6 +227,20 @@ export default function SalesReportPage() {
           value={salesData?.avgProfit ?? 0}
           isCurrency
           icon={BarChart2}
+        />
+        <StatCard
+          title="Settled Sales"
+          value={salesData?.settledSales ?? 0}
+          isCurrency
+          icon={CheckCircle}
+          className="border-green-200 bg-green-50"
+        />
+        <StatCard
+          title="Unsettled Sales"
+          value={salesData?.unsettledSales ?? 0}
+          isCurrency
+          icon={Clock}
+          className="border-yellow-200 bg-yellow-50"
         />
       </div>
 
@@ -235,7 +310,7 @@ export default function SalesReportPage() {
             Order Details
             {salesData && (
               <span className="ml-2 text-muted-foreground font-normal">
-                ({salesData.totalOrders} orders)
+                ({displayedOrders.length} orders)
               </span>
             )}
           </h3>
@@ -243,7 +318,7 @@ export default function SalesReportPage() {
 
         {isLoading ? (
           <div className="p-8 text-center text-muted-foreground text-sm">Loading…</div>
-        ) : !salesData?.orders.length ? (
+        ) : !displayedOrders.length ? (
           <div className="p-8 text-center text-muted-foreground text-sm">
             No orders found for the selected period.
           </div>
@@ -257,18 +332,22 @@ export default function SalesReportPage() {
                   <TableHead>Project</TableHead>
                   <TableHead>Package</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Payment</TableHead>
                   <TableHead className="text-right">Revenue</TableHead>
                   <TableHead className="text-right">Cost</TableHead>
                   <TableHead className="text-right">Profit</TableHead>
+                  <TableHead></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {salesData.orders.map(order => {
+                {displayedOrders.map(order => {
                   const packageDisplay =
                     order.package_snapshot?.name ??
                     order.package_name ??
                     '—'
                   const profit = Number(order.profit ?? 0)
+                  const isSettled = order.payment_status === 'Settled'
+                  const isPending = order.payment_status === 'Pending'
 
                   return (
                     <TableRow key={order.id}>
@@ -301,6 +380,19 @@ export default function SalesReportPage() {
                           {order.status}
                         </Badge>
                       </TableCell>
+                      <TableCell>
+                        {isSettled ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
+                            Settled
+                          </span>
+                        ) : isPending ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-700">
+                            Pending
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
                       <TableCell className="text-right font-medium text-sm">
                         {formatCurrency(Number(order.total_price))}
                       </TableCell>
@@ -309,6 +401,16 @@ export default function SalesReportPage() {
                       </TableCell>
                       <TableCell className={`text-right text-sm font-medium ${profit >= 0 ? 'text-green-700' : 'text-red-600'}`}>
                         {formatCurrency(profit)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {isPending && (
+                          <ConfirmPaymentButton
+                            orderId={order.id}
+                            onConfirmed={() =>
+                              queryClient.invalidateQueries({ queryKey: ['sales-report'] })
+                            }
+                          />
+                        )}
                       </TableCell>
                     </TableRow>
                   )
