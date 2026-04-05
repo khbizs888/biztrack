@@ -500,6 +500,135 @@ export async function bulkInsertOrders(
   return { ids, errors }
 }
 
+// ─────────────────────────────────────────────
+// Import Batch Tracking
+// ─────────────────────────────────────────────
+
+export interface ImportBatch {
+  id: string
+  project_id: string | null
+  file_name: string | null
+  total_rows: number
+  success_count: number
+  skipped_count: number
+  error_count: number
+  status: string
+  imported_at: string
+  completed_at: string | null
+  notes: string | null
+  projects?: { name: string } | null
+}
+
+export async function createImportBatch(
+  projectId: string | null,
+  fileName: string,
+  totalRows: number
+): Promise<string> {
+  const sb = createAdminClient()
+  const { data, error } = await sb
+    .from('import_batches')
+    .insert({ project_id: projectId, file_name: fileName, total_rows: totalRows, status: 'processing' })
+    .select('id')
+    .single()
+  if (error) throw new Error(error.message)
+  return data.id as string
+}
+
+export async function updateImportBatch(
+  batchId: string,
+  counts: { success_count: number; skipped_count: number; error_count: number },
+  status: 'completed' | 'failed'
+): Promise<void> {
+  const sb = createAdminClient()
+  const { error } = await sb
+    .from('import_batches')
+    .update({ ...counts, status, completed_at: new Date().toISOString() })
+    .eq('id', batchId)
+  if (error) throw new Error(error.message)
+}
+
+export async function fetchImportBatches(filters?: {
+  projectId?: string
+  dateFrom?: string
+  dateTo?: string
+}): Promise<ImportBatch[]> {
+  const sb = createAdminClient()
+  let q = sb
+    .from('import_batches')
+    .select('*, projects(name)')
+    .order('imported_at', { ascending: false })
+
+  if (filters?.projectId) q = q.eq('project_id', filters.projectId)
+  if (filters?.dateFrom)  q = q.gte('imported_at', filters.dateFrom)
+  if (filters?.dateTo)    q = q.lte('imported_at', filters.dateTo + 'T23:59:59')
+
+  const { data, error } = await q
+  if (error) throw new Error(error.message)
+  return plain(data ?? []) as ImportBatch[]
+}
+
+export async function fetchBatchOrders(batchId: string): Promise<Order[]> {
+  const sb = createAdminClient()
+  const { data, error } = await sb
+    .from('orders')
+    .select('*, customers(id, name, phone, address), projects(id, name, code), packages(id, name, code)')
+    .eq('import_batch_id', batchId)
+    .order('created_at', { ascending: true })
+  if (error) throw new Error(error.message)
+  return plain(data ?? []) as Order[]
+}
+
+export async function reprocessBatchErrors(batchId: string): Promise<{
+  reprocessed: number
+  failed: number
+}> {
+  const sb = createAdminClient()
+  // Fetch orders with import_status='error' in this batch
+  const { data: errorOrders, error } = await sb
+    .from('orders')
+    .select('id')
+    .eq('import_batch_id', batchId)
+    .eq('import_status', 'error')
+  if (error) throw new Error(error.message)
+
+  const ids = (errorOrders ?? []).map((o: { id: string }) => o.id)
+  if (ids.length === 0) return { reprocessed: 0, failed: 0 }
+
+  const { processOrdersBatch } = await import('./order-processing')
+  const result = await processOrdersBatch(ids)
+
+  // Update orders that succeeded to import_status='success'
+  if (result.processed > 0) {
+    const succeededIds = ids.filter(
+      (id: string) => !result.errors.some(e => e.orderId === id)
+    )
+    if (succeededIds.length > 0) {
+      await sb
+        .from('orders')
+        .update({ import_status: 'success', import_error: null })
+        .in('id', succeededIds)
+    }
+  }
+
+  // Recalculate batch counts
+  const { data: batchOrders } = await sb
+    .from('orders')
+    .select('import_status')
+    .eq('import_batch_id', batchId)
+
+  if (batchOrders) {
+    const successCount = batchOrders.filter((o: { import_status: string | null }) => o.import_status === 'success').length
+    const errorCount   = batchOrders.filter((o: { import_status: string | null }) => o.import_status === 'error').length
+    const skippedCount = batchOrders.filter((o: { import_status: string | null }) => o.import_status === 'skipped').length
+    await sb
+      .from('import_batches')
+      .update({ success_count: successCount, error_count: errorCount, skipped_count: skippedCount })
+      .eq('id', batchId)
+  }
+
+  return { reprocessed: result.processed, failed: result.failed }
+}
+
 export async function fetchActivePackages(): Promise<
   Array<{ id: string; project_id: string; name: string; code: string | null }>
 > {

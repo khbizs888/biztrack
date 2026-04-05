@@ -9,6 +9,8 @@ import {
   bulkUpsertCustomers,
   bulkInsertOrders,
   fetchExistingTrackingNumbers,
+  createImportBatch,
+  updateImportBatch,
 } from '@/app/actions/data'
 import { processOrdersBatch } from '@/app/actions/order-processing'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
@@ -94,6 +96,7 @@ interface Props { open: boolean; onClose: () => void }
 export default function ImportOrdersModal({ open, onClose }: Props) {
   const queryClient = useQueryClient()
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const fileNameRef = useRef<string>('')
   const [step, setStep] = useState<'upload' | 'preview' | 'done'>('upload')
   const [rows, setRows] = useState<ParsedRow[]>([])
   const [importing, setImporting] = useState(false)
@@ -123,6 +126,8 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
+
+    fileNameRef.current = file.name
 
     Papa.parse<Record<string, string>>(file, {
       header: true,
@@ -203,6 +208,23 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
     let errorCount     = 0
     const errorDetails: string[] = []
 
+    // Determine dominant project_id from rows (for batch tagging)
+    const projectIdCounts: Record<string, number> = {}
+    for (const r of validRows) {
+      if (r.projectId) projectIdCounts[r.projectId] = (projectIdCounts[r.projectId] ?? 0) + 1
+    }
+    const dominantProjectId = Object.keys(projectIdCounts).sort(
+      (a, b) => projectIdCounts[b] - projectIdCounts[a]
+    )[0] ?? null
+
+    // Create import batch record
+    let batchId: string | null = null
+    try {
+      batchId = await createImportBatch(dominantProjectId, fileNameRef.current || 'import.csv', rows.length)
+    } catch {
+      // batch tracking is non-blocking
+    }
+
     try {
       // Step 1a: Upsert customers
       const customerRows = validRows.map(r => ({
@@ -230,19 +252,20 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
           continue
         }
         toInsert.push({
-          customer_id:     customerMap[r.phone] ?? null,
-          project_id:      r.projectId,
-          package_id:      r.packageId,
-          product_name:    r.productName,
-          package_name:    r.packageName || null,
-          total_price:     r.totalPrice,
-          status:          'pending',
-          order_date:      r.date,
-          channel:         r.channel || null,
-          is_new_customer: !r.isRepeat,
-          tracking_number: r.trackingNumber,
-          import_status:   'success',
-          quantity:        1,
+          customer_id:      customerMap[r.phone] ?? null,
+          project_id:       r.projectId,
+          package_id:       r.packageId,
+          product_name:     r.productName,
+          package_name:     r.packageName || null,
+          total_price:      r.totalPrice,
+          status:           'pending',
+          order_date:       r.date,
+          channel:          r.channel || null,
+          is_new_customer:  !r.isRepeat,
+          tracking_number:  r.trackingNumber,
+          import_status:    'success',
+          quantity:         1,
+          import_batch_id:  batchId,
         })
       }
 
@@ -260,9 +283,23 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
         }
       }
 
+      // Update batch record
+      if (batchId) {
+        try {
+          await updateImportBatch(
+            batchId,
+            { success_count: successCount, skipped_count: skippedCount, error_count: errorCount },
+            errorCount > 0 && successCount === 0 ? 'failed' : 'completed'
+          )
+        } catch {
+          // non-blocking
+        }
+      }
+
       // Refresh
       queryClient.invalidateQueries({ queryKey: ['orders'] })
       queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      queryClient.invalidateQueries({ queryKey: ['import-batches'] })
 
       setResult({ success: successCount, skipped: skippedCount, errors: errorCount, errorDetails })
       setStep('done')

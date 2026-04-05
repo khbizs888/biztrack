@@ -27,7 +27,13 @@ interface NavGroup {
 
 const NAV: NavGroup[] = [
   { label: 'Home',        icon: LayoutDashboard, href: '/dashboard' },
-  { label: 'Daily Order', icon: ShoppingCart,    href: '/orders' },
+  {
+    label: 'Orders', icon: ShoppingCart,
+    children: [
+      { label: 'Daily Order',     href: '/orders' },
+      { label: 'Import History',  href: '/orders/import-history' },
+    ],
+  },
   {
     label: 'Reports', icon: BarChart2,
     children: [
