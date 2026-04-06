@@ -641,6 +641,33 @@ export async function fetchActivePackages(): Promise<
   return plain(data ?? []) as Array<{ id: string; project_id: string; name: string; code: string | null }>
 }
 
+// ─────────────────────────────────────────────
+// Import Mappings
+// ─────────────────────────────────────────────
+
+export async function fetchImportMappings(): Promise<
+  Array<{ id: string; name: string; mapping: Record<string, string> }>
+> {
+  const sb = createAdminClient()
+  const { data, error } = await sb
+    .from('import_mappings')
+    .select('id, name, mapping')
+    .order('created_at', { ascending: false })
+  if (error) throw new Error(error.message)
+  return plain(data ?? []) as Array<{ id: string; name: string; mapping: Record<string, string> }>
+}
+
+export async function saveImportMapping(
+  name: string,
+  mapping: Record<string, string>
+): Promise<void> {
+  const sb = createAdminClient()
+  const { error } = await sb
+    .from('import_mappings')
+    .insert({ name, mapping })
+  if (error) throw new Error(error.message)
+}
+
 export async function updateOrderStatus(id: string, status: string) {
   const sb = createAdminClient()
   const { error } = await sb.from('orders').update({ status }).eq('id', id)

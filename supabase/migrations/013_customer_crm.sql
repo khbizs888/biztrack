@@ -116,8 +116,8 @@ SET
     ELSE 'New'
   END
 FROM order_stats os
-LEFT JOIN preferred_brands pb  ON c.id = pb.customer_id
-LEFT JOIN preferred_platforms pp ON c.id = pp.customer_id
+LEFT JOIN preferred_brands pb  ON os.customer_id = pb.customer_id
+LEFT JOIN preferred_platforms pp ON os.customer_id = pp.customer_id
 WHERE c.id = os.customer_id;
 
 -- ============================================================
