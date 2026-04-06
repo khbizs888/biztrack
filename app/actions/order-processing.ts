@@ -1,6 +1,7 @@
 'use server'
 
 import { createAdminClient } from '@/lib/supabase/admin'
+import { refreshCustomerStats } from '@/app/actions/customer-crm'
 
 // ─────────────────────────────────────────────
 // Main processOrder action
@@ -79,6 +80,16 @@ export async function processOrder(orderId: string): Promise<{ success: boolean;
       .single()
 
     if (updateError) return { success: false, error: updateError.message }
+
+    // 9. Refresh customer CRM stats (non-blocking)
+    const customerId = order.customer_id as string | null
+    if (customerId) {
+      try {
+        await refreshCustomerStats(customerId)
+      } catch (statsErr) {
+        console.error('Customer stats refresh failed (non-blocking):', statsErr)
+      }
+    }
 
     return { success: true, order: updatedOrder as Record<string, unknown> }
   } catch (err: unknown) {

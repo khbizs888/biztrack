@@ -9,7 +9,7 @@ import PageHeader from '@/components/shared/PageHeader'
 import {
   TrendingUp, TrendingDown, ShoppingCart, DollarSign, Clock,
   AlertTriangle, CheckCircle2, Plus, Upload, Receipt, Warehouse,
-  BarChart3, ArrowRight, Percent,
+  BarChart3, ArrowRight, Percent, Bell, Crown, Users,
 } from 'lucide-react'
 import RevenueTrendChart from '@/components/modules/dashboard/RevenueTrendChart'
 import BrandRevenueChart from '@/components/modules/dashboard/BrandRevenueChart'
@@ -96,6 +96,8 @@ async function fetchDashboardData() {
     { data: trendRaw },
     { data: lowStockRaw },
     { data: recentRaw },
+    { data: followUpTodayRaw },
+    { data: crmTagRaw },
   ] = await Promise.all([
     // Q1 – today's orders
     sb.from('orders')
@@ -147,6 +149,17 @@ async function fetchDashboardData() {
       .select('id, created_at, order_date, tracking_number, fb_name, total_price, status, payment_status, is_cod, package_name, package_snapshot, projects(code), customers(name)')
       .order('created_at', { ascending: false })
       .limit(10),
+
+    // Q9 – follow-ups due today
+    sb.from('customers')
+      .select('id, name, phone, customer_tag')
+      .eq('follow_up_date', today)
+      .limit(5),
+
+    // Q10 – dormant + lost counts
+    sb.from('customers')
+      .select('customer_tag')
+      .in('customer_tag', ['Dormant', 'Lost']),
   ])
 
   // ── Today's Snapshot ─────────────────────────────────────────────────────────
@@ -251,6 +264,12 @@ async function fetchDashboardData() {
     isCod:         Boolean(o.is_cod),
   }))
 
+  // ── CRM Alerts ────────────────────────────────────────────────────────────────
+  type FollowUpCustomer = { id: string; name: string; phone: string; customer_tag: string }
+  const followUpToday: FollowUpCustomer[] = (followUpTodayRaw ?? []) as FollowUpCustomer[]
+  const dormantCount = (crmTagRaw ?? []).filter((c: any) => c.customer_tag === 'Dormant').length
+  const lostCount    = (crmTagRaw ?? []).filter((c: any) => c.customer_tag === 'Lost').length
+
   return {
     today:    { orders: todayOrders,   revenue: todayRevenue,   profit: todayProfit },
     yesterday:{ orders: yesterdayOrders, revenue: yesterdayRevenue },
@@ -262,6 +281,7 @@ async function fetchDashboardData() {
     topPackages,
     lowStock,
     recentOrders,
+    crmAlerts: { followUpToday, dormantCount, lostCount },
   }
 }
 
@@ -423,7 +443,78 @@ export default async function DashboardPage() {
         </div>
       </section>
 
-      {/* ── Row 3: Charts ──────────────────────────────────────────────────────── */}
+      {/* ── Row 3: CRM Alerts ─────────────────────────────────────────────────── */}
+      {(d.crmAlerts.followUpToday.length > 0 || d.crmAlerts.dormantCount > 0 || d.crmAlerts.lostCount > 0) && (
+        <section>
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+            CRM Alerts
+          </h2>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            {/* Follow-ups due today */}
+            <Card className="shadow-sm border-amber-200 bg-amber-50/40">
+              <CardContent className="pt-4">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <Bell className="h-4 w-4 text-amber-600" />
+                    <span className="text-sm font-semibold text-amber-800">Follow-ups Today</span>
+                  </div>
+                  <Link href="/customers?tag=followup"
+                    className="text-xs text-amber-700 hover:underline flex items-center gap-1">
+                    View all <ArrowRight className="h-3 w-3" />
+                  </Link>
+                </div>
+                {d.crmAlerts.followUpToday.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">None due today</p>
+                ) : (
+                  <ul className="space-y-1.5">
+                    {d.crmAlerts.followUpToday.map(c => (
+                      <li key={c.id} className="flex items-center justify-between">
+                        <Link href={`/customers/${c.id}`}
+                          className="text-sm font-medium hover:text-amber-700 hover:underline">
+                          {c.name}
+                        </Link>
+                        <span className="text-xs text-amber-700 font-medium">{c.customer_tag}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Dormant */}
+            <Card className={`shadow-sm ${d.crmAlerts.dormantCount > 0 ? 'border-orange-200 bg-orange-50/40' : ''}`}>
+              <CardContent className="pt-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Users className="h-4 w-4 text-orange-500" />
+                  <span className="text-sm font-semibold text-orange-800">Dormant Customers</span>
+                </div>
+                <p className="text-3xl font-bold text-orange-700">{d.crmAlerts.dormantCount}</p>
+                <p className="text-xs text-muted-foreground mt-1">no order in 31–90 days</p>
+                <Link href="/customers" className="text-xs text-orange-600 hover:underline mt-2 inline-flex items-center gap-1">
+                  View customers <ArrowRight className="h-3 w-3" />
+                </Link>
+              </CardContent>
+            </Card>
+
+            {/* Lost */}
+            <Card className={`shadow-sm ${d.crmAlerts.lostCount > 0 ? 'border-red-200 bg-red-50/40' : ''}`}>
+              <CardContent className="pt-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Crown className="h-4 w-4 text-red-500" />
+                  <span className="text-sm font-semibold text-red-800">Lost Customers</span>
+                </div>
+                <p className="text-3xl font-bold text-red-700">{d.crmAlerts.lostCount}</p>
+                <p className="text-xs text-muted-foreground mt-1">no order in 90+ days — win back</p>
+                <Link href="/customers" className="text-xs text-red-600 hover:underline mt-2 inline-flex items-center gap-1">
+                  View customers <ArrowRight className="h-3 w-3" />
+                </Link>
+              </CardContent>
+            </Card>
+          </div>
+        </section>
+      )}
+
+      {/* ── Row 4: Charts ──────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <RevenueTrendChart data={d.trendChartData} />
         <BrandRevenueChart data={d.brandChartData} />

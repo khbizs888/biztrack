@@ -2,6 +2,29 @@ export type OrderStatus = 'pending' | 'processing' | 'shipped' | 'delivered' | '
 
 export type CustomerStatus = 'Active' | 'New' | 'At Risk' | 'Lapsed' | 'Churned'
 
+export type CustomerTag = 'New' | 'Repeat' | 'VIP' | 'Dormant' | 'Lost'
+
+export interface CustomerCRM {
+  id: string
+  name: string
+  phone: string
+  address: string | null
+  created_at: string
+  // CRM fields (migration 013)
+  total_orders: number
+  total_spent: number
+  first_order_date: string | null
+  last_order_date: string | null
+  average_order_value: number
+  customer_tag: CustomerTag
+  preferred_brand: string | null
+  preferred_platform: string | null
+  notes: string | null
+  last_contacted_at: string | null
+  follow_up_date: string | null
+  follow_up_note: string | null
+}
+
 export type AttributeType = 'text' | 'number' | 'boolean' | 'select'
 
 export interface Project {
