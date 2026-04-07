@@ -339,32 +339,36 @@ export async function calculateProjectPnL(
 
 export async function upsertCustomer(name: string, phone: string, address?: string | null) {
   const sb = createAdminClient()
-  const { data: existing } = await sb.from('customers').select('id').eq('phone', phone).maybeSingle()
-  if (existing) return existing.id as string
-
   const { data, error } = await sb
-    .from('customers').insert({ name, phone, address: address ?? null }).select('id').single()
+    .from('customers')
+    .upsert({ name, phone, address: address ?? null }, { onConflict: 'phone' })
+    .select('id')
+    .single()
   if (error) throw new Error(error.message)
   return data.id as string
 }
 
 export async function bulkUpsertCustomers(rows: { name: string; phone: string; address?: string | null }[]): Promise<Record<string, string>> {
   const sb = createAdminClient()
-  const phones = rows.map(r => r.phone)
-  const { data: existing } = await sb.from('customers').select('id, phone').in('phone', phones)
+
+  // Deduplicate by phone so a single CSV with repeated phones doesn't conflict
+  const deduped = Object.values(
+    Object.fromEntries(rows.map(r => [r.phone, r]))
+  )
+
+  // UPSERT: insert new customers; on duplicate phone update the name so we
+  // always return a row (and its id) even when the customer already exists.
+  const { data: upserted, error } = await sb
+    .from('customers')
+    .upsert(
+      deduped.map(r => ({ name: r.name, phone: r.phone, address: r.address ?? null })),
+      { onConflict: 'phone' }
+    )
+    .select('id, phone')
+  if (error) throw new Error(error.message)
 
   const map: Record<string, string> = {}
-  existing?.forEach(c => { map[c.phone] = c.id })
-
-  const missing = rows.filter(r => !map[r.phone])
-  if (missing.length > 0) {
-    const { data: created, error } = await sb
-      .from('customers')
-      .insert(missing.map(r => ({ name: r.name, phone: r.phone, address: r.address ?? null })))
-      .select('id, phone')
-    if (error) throw new Error(error.message)
-    created?.forEach(c => { map[c.phone] = c.id })
-  }
+  upserted?.forEach(c => { map[c.phone] = c.id })
   return map
 }
 
