@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, Fragment } from 'react'
 import { useOrders } from '@/lib/hooks/useOrders'
 import { useQuery } from '@tanstack/react-query'
 import { fetchProjects } from '@/app/actions/data'
@@ -13,8 +13,8 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { formatCurrency, formatDate } from '@/lib/utils'
-import { Plus, ShoppingCart, FileDown, FileUp, History, Calendar } from 'lucide-react'
-import type { OrderFilters } from '@/lib/types'
+import { Plus, ShoppingCart, FileDown, FileUp, History, Calendar, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-react'
+import type { OrderFilters, Order } from '@/lib/types'
 import type { Project } from '@/lib/types'
 import AddOrderModal from '@/components/modules/orders/AddOrderModal'
 import ImportOrdersModal from '@/components/modules/orders/ImportOrdersModal'
@@ -23,86 +23,232 @@ import { BRAND_COLORS, BRANDS } from '@/lib/constants'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 
+type ViewMode = 'day' | 'week' | 'month'
 const PAGE_SIZE = 50
 
-function getTodayStr() {
-  return new Date().toISOString().split('T')[0]
+function toDateStr(d: Date) {
+  return d.toISOString().split('T')[0]
+}
+
+function getToday() {
+  return toDateStr(new Date())
+}
+
+function getThisWeek() {
+  const now = new Date()
+  const dow = now.getDay()
+  const diff = dow === 0 ? -6 : 1 - dow
+  const mon = new Date(now)
+  mon.setDate(now.getDate() + diff)
+  const sun = new Date(mon)
+  sun.setDate(mon.getDate() + 6)
+  return { from: toDateStr(mon), to: toDateStr(sun) }
+}
+
+function getLastWeek() {
+  const { from } = getThisWeek()
+  const mon = new Date(from)
+  mon.setDate(mon.getDate() - 7)
+  const sun = new Date(mon)
+  sun.setDate(mon.getDate() + 6)
+  return { from: toDateStr(mon), to: toDateStr(sun) }
+}
+
+function getThisMonth() {
+  const now = new Date()
+  return {
+    from: toDateStr(new Date(now.getFullYear(), now.getMonth(), 1)),
+    to: toDateStr(new Date(now.getFullYear(), now.getMonth() + 1, 0)),
+  }
+}
+
+function getLastMonth() {
+  const now = new Date()
+  return {
+    from: toDateStr(new Date(now.getFullYear(), now.getMonth() - 1, 1)),
+    to: toDateStr(new Date(now.getFullYear(), now.getMonth(), 0)),
+  }
+}
+
+function fmtRangeHeader(from: string, to: string) {
+  const f = new Date(from + 'T00:00:00')
+  const t = new Date(to + 'T00:00:00')
+  if (from === to) return f.toLocaleDateString('en-MY', { day: 'numeric', month: 'short', year: 'numeric' })
+  return `${f.toLocaleDateString('en-MY', { day: 'numeric', month: 'short' })} – ${t.toLocaleDateString('en-MY', { day: 'numeric', month: 'short', year: 'numeric' })}`
+}
+
+function fmtDayHeading(dateStr: string) {
+  return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-MY', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  })
+}
+
+const PRESETS = [
+  ['Today', 'today'], ['Yesterday', 'yesterday'],
+  ['This Week', 'this-week'], ['Last Week', 'last-week'],
+  ['This Month', 'this-month'], ['Last Month', 'last-month'],
+] as const
+
+function TableHeaders({ showDate = false }: { showDate?: boolean }) {
+  return (
+    <TableRow>
+      {showDate && <TableHead>Date</TableHead>}
+      <TableHead>Time</TableHead>
+      <TableHead>Tracking #</TableHead>
+      <TableHead>Customer</TableHead>
+      <TableHead>Brand</TableHead>
+      <TableHead>Package</TableHead>
+      <TableHead className="text-right">Amount</TableHead>
+      <TableHead>Platform</TableHead>
+      <TableHead>Method</TableHead>
+      <TableHead>Payment</TableHead>
+      <TableHead>COD Payout</TableHead>
+      <TableHead className="w-28" />
+    </TableRow>
+  )
 }
 
 export default function OrdersPage() {
-  const today = getTodayStr()
-  const [selectedDate, setSelectedDate] = useState(today)
-  const [selectedBrand, setSelectedBrand] = useState<string>('All')
+  const today = getToday()
+  const thisWeek = getThisWeek()
+
+  const [dateFrom, setDateFrom] = useState(thisWeek.from)
+  const [dateTo, setDateTo] = useState(thisWeek.to)
+  const [viewMode, setViewMode] = useState<ViewMode>('week')
+  const [selectedBrand, setSelectedBrand] = useState('All')
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   const [showAddModal, setShowAddModal] = useState(false)
   const [showImportModal, setShowImportModal] = useState(false)
+  const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set())
+  const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set())
 
   const { data: projects = [] } = useQuery<Project[]>({
     queryKey: ['projects'],
     queryFn: fetchProjects,
   })
 
-  // Map project name -> id for filtering
   const brandProjectId = useMemo(() => {
     const map: Record<string, string> = {}
-    for (const p of projects) {
-      map[p.name] = p.id
-    }
+    for (const p of projects) map[p.name] = p.id
     return map
   }, [projects])
 
-  const filters: OrderFilters = useMemo(() => {
-    const f: OrderFilters = {
-      dateFrom: selectedDate,
-      dateTo: selectedDate,
-      page,
-      pageSize: PAGE_SIZE,
+  // All orders for the range — for stats, tabs, week/month views
+  const { data: allData } = useOrders(
+    useMemo(() => ({ dateFrom, dateTo, pageSize: 9999, page: 1 }), [dateFrom, dateTo])
+  )
+
+  // Paginated orders — for day view table
+  const { data, isLoading, error } = useOrders(
+    useMemo(() => {
+      const f: OrderFilters = { dateFrom, dateTo, page, pageSize: PAGE_SIZE }
+      if (selectedBrand !== 'All' && selectedBrand !== 'Unassigned' && brandProjectId[selectedBrand])
+        f.projectId = brandProjectId[selectedBrand]
+      if (search.trim()) f.search = search.trim()
+      return f
+    }, [dateFrom, dateTo, selectedBrand, brandProjectId, page, search])
+  )
+
+  // Brand tab stats (count + revenue)
+  const brandStats = useMemo(() => {
+    const all = allData?.data ?? []
+    const result: Record<string, { count: number; revenue: number }> = {
+      All: { count: all.length, revenue: all.reduce((s, o) => s + Number(o.total_price), 0) },
+      Unassigned: {
+        count: all.filter(o => !o.project_id).length,
+        revenue: all.filter(o => !o.project_id).reduce((s, o) => s + Number(o.total_price), 0),
+      },
     }
-    if (selectedBrand !== 'All' && brandProjectId[selectedBrand]) {
-      f.projectId = brandProjectId[selectedBrand]
-    }
-    if (search.trim()) f.search = search.trim()
-    return f
-  }, [selectedDate, selectedBrand, brandProjectId, page, search])
-
-  const { data, isLoading, error } = useOrders(filters)
-
-  // Per-brand order counts for the selected date (load without brand filter)
-  const allDayFilters: OrderFilters = useMemo(() => ({
-    dateFrom: selectedDate,
-    dateTo: selectedDate,
-    pageSize: 9999,
-    page: 1,
-  }), [selectedDate])
-  const { data: allDayData } = useOrders(allDayFilters)
-
-  const brandCounts = useMemo(() => {
-    const counts: Record<string, number> = { All: allDayData?.count ?? 0 }
     for (const brand of BRANDS) {
       const pid = brandProjectId[brand]
-      if (!pid) continue
-      counts[brand] = (allDayData?.data ?? []).filter(o => o.project_id === pid).length
+      const branded = pid ? all.filter(o => o.project_id === pid) : []
+      result[brand] = { count: branded.length, revenue: branded.reduce((s, o) => s + Number(o.total_price), 0) }
     }
-    return counts
-  }, [allDayData, brandProjectId])
+    return result
+  }, [allData, brandProjectId])
 
-  // Summary stats for selected date (all brands)
-  const summaryStats = useMemo(() => {
-    const orders = allDayData?.data ?? []
-    const total = orders.length
-    const revenue = orders.reduce((s, o) => s + Number(o.total_price), 0)
-    const settled = orders.filter(o => o.payment_status === 'Settled').reduce((s, o) => s + Number(o.total_price), 0)
-    const unsettled = revenue - settled
-    return { total, revenue, settled, unsettled }
-  }, [allDayData])
+  // Filtered + searched orders for stats and week/month group views
+  const filteredOrders = useMemo(() => {
+    const all = allData?.data ?? []
+    let base = selectedBrand === 'All' ? all
+      : selectedBrand === 'Unassigned' ? all.filter(o => !o.project_id)
+      : all.filter(o => o.project_id === brandProjectId[selectedBrand])
+    if (search.trim()) {
+      const q = search.toLowerCase()
+      base = base.filter(o =>
+        (o.tracking_number ?? '').toLowerCase().includes(q) ||
+        ((o.customers as any)?.name ?? '').toLowerCase().includes(q) ||
+        ((o.customers as any)?.phone ?? '').toLowerCase().includes(q)
+      )
+    }
+    return base
+  }, [allData, selectedBrand, brandProjectId, search])
 
-  const totalPages = data ? Math.ceil(data.count / PAGE_SIZE) : 0
+  const stats = useMemo(() => {
+    const total = filteredOrders.length
+    const revenue = filteredOrders.reduce((s, o) => s + Number(o.total_price), 0)
+    const settled = filteredOrders.filter(o => o.payment_status === 'Settled').reduce((s, o) => s + Number(o.total_price), 0)
+    const newC = filteredOrders.filter(o => o.is_new_customer).length
+    return { total, revenue, settled, unsettled: revenue - settled, avg: total ? revenue / total : 0, newC, repeatC: total - newC }
+  }, [filteredOrders])
+
+  const ordersByDay = useMemo(() => {
+    const groups: Record<string, Order[]> = {}
+    for (const o of filteredOrders) {
+      if (!groups[o.order_date]) groups[o.order_date] = []
+      groups[o.order_date].push(o)
+    }
+    return groups
+  }, [filteredOrders])
+
+  const sortedDays = useMemo(() => Object.keys(ordersByDay).sort((a, b) => b.localeCompare(a)), [ordersByDay])
+
+  const calendarDays = useMemo(() => {
+    if (viewMode !== 'month') return []
+    const start = new Date(dateFrom + 'T00:00:00')
+    const year = start.getFullYear()
+    const month = start.getMonth()
+    const firstDow = new Date(year, month, 1).getDay()
+    const pad = firstDow === 0 ? 6 : firstDow - 1
+    const lastDay = new Date(year, month + 1, 0).getDate()
+    const days: (string | null)[] = Array(pad).fill(null)
+    for (let d = 1; d <= lastDay; d++) days.push(toDateStr(new Date(year, month, d)))
+    while (days.length % 7 !== 0) days.push(null)
+    return days
+  }, [viewMode, dateFrom])
+
+  function applyPreset(key: string) {
+    setPage(1)
+    if (key === 'today') { setDateFrom(today); setDateTo(today); setViewMode('day') }
+    else if (key === 'yesterday') {
+      const y = new Date(); y.setDate(y.getDate() - 1); const s = toDateStr(y)
+      setDateFrom(s); setDateTo(s); setViewMode('day')
+    } else if (key === 'this-week') { const r = getThisWeek(); setDateFrom(r.from); setDateTo(r.to); setViewMode('week') }
+    else if (key === 'last-week') { const r = getLastWeek(); setDateFrom(r.from); setDateTo(r.to); setViewMode('week') }
+    else if (key === 'this-month') { const r = getThisMonth(); setDateFrom(r.from); setDateTo(r.to); setViewMode('month') }
+    else if (key === 'last-month') { const r = getLastMonth(); setDateFrom(r.from); setDateTo(r.to); setViewMode('month') }
+  }
+
+  function navigateDay(dir: -1 | 1) {
+    const d = new Date(dateFrom + 'T00:00:00')
+    d.setDate(d.getDate() + dir)
+    const s = toDateStr(d)
+    setDateFrom(s); setDateTo(s); setPage(1)
+  }
+
+  function toggleDay(day: string) {
+    setExpandedDays(prev => { const n = new Set(prev); n.has(day) ? n.delete(day) : n.add(day); return n })
+  }
+
+  function toggleOrder(id: string) {
+    setExpandedOrders(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  }
 
   function exportCSV() {
-    if (!data?.data) return
-    const rows = data.data.map(o => [
-      formatDate(o.order_date),
+    const header = 'Date,Time,Tracking #,Customer,Phone,Brand,Package,Amount,Platform,Payment Method,Payment Status,COD Payout\n'
+    const rows = filteredOrders.map(o => [
+      o.order_date,
       o.created_at ? new Date(o.created_at).toLocaleTimeString('en-MY', { hour: '2-digit', minute: '2-digit' }) : '',
       o.tracking_number ?? '',
       (o.customers as any)?.name ?? '',
@@ -111,39 +257,95 @@ export default function OrdersPage() {
       o.package_snapshot?.name ?? o.package_name ?? '',
       o.total_price,
       o.channel ?? '',
+      o.is_cod ? 'COD' : 'Prepaid',
       o.payment_status ?? '',
-    ])
-    const header = 'Date,Time,Tracking #,Customer Name,Phone,Brand,Package,Amount,Platform,Payment Status\n'
-    const csv = header + rows.map(r => r.map(v => `"${v}"`).join(',')).join('\n')
+      (o as any).cod_payout ?? '',
+    ].map(v => `"${v}"`).join(','))
+    const csv = header + rows.join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
-    a.href = url
-    a.download = `orders-${selectedDate}.csv`
-    a.click()
+    a.href = url; a.download = `orders-${dateFrom}-to-${dateTo}.csv`; a.click()
     URL.revokeObjectURL(url)
   }
 
-  function handleBrandChange(brand: string) {
-    setSelectedBrand(brand)
-    setPage(1)
+  // Render order rows (main + expandable detail) — returns array for flatMap
+  function renderOrderRows(order: Order, showDate: boolean) {
+    const projectName = (order.projects as any)?.name ?? null
+    const bc = projectName ? BRAND_COLORS[projectName] : null
+    const pkgName = order.package_snapshot?.name ?? order.package_name ?? '—'
+    const isSettled = order.payment_status === 'Settled'
+    const isExp = expandedOrders.has(order.id)
+    const colSpan = showDate ? 12 : 11
+
+    const mainRow = (
+      <TableRow
+        key={order.id}
+        className="cursor-pointer hover:bg-muted/40"
+        onClick={() => toggleOrder(order.id)}
+      >
+        {showDate && (
+          <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{formatDate(order.order_date)}</TableCell>
+        )}
+        <TableCell className="text-sm whitespace-nowrap text-muted-foreground">
+          {order.created_at ? new Date(order.created_at).toLocaleTimeString('en-MY', { hour: '2-digit', minute: '2-digit' }) : '—'}
+        </TableCell>
+        <TableCell className="text-xs font-mono text-muted-foreground">{order.tracking_number ?? '—'}</TableCell>
+        <TableCell className="font-medium">
+          {(order.customers as any)?.name ?? '—'}
+          {(order.customers as any)?.phone && (
+            <div className="text-xs text-muted-foreground">{(order.customers as any).phone}</div>
+          )}
+        </TableCell>
+        <TableCell>
+          {bc && projectName ? (
+            <span className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold border', bc.bg, bc.text, bc.border)}>
+              {projectName}
+            </span>
+          ) : projectName ? (
+            <Badge variant="outline">{projectName}</Badge>
+          ) : <span className="text-muted-foreground text-xs">—</span>}
+        </TableCell>
+        <TableCell className="text-sm max-w-[130px] truncate">{pkgName}</TableCell>
+        <TableCell className="text-right font-medium whitespace-nowrap">{formatCurrency(Number(order.total_price))}</TableCell>
+        <TableCell className="text-sm text-muted-foreground">{order.channel ?? '—'}</TableCell>
+        <TableCell className="text-sm text-muted-foreground">{order.is_cod ? 'COD' : 'Prepaid'}</TableCell>
+        <TableCell>
+          {isSettled ? <Badge variant="success">Settled</Badge> : <Badge variant="warning">Pending</Badge>}
+        </TableCell>
+        <TableCell className="text-sm text-muted-foreground">
+          {(order as any).cod_payout ? formatCurrency((order as any).cod_payout) : '—'}
+        </TableCell>
+        <TableCell onClick={e => e.stopPropagation()}>
+          <OrderActions order={order} />
+        </TableCell>
+      </TableRow>
+    )
+
+    if (!isExp) return [mainRow]
+
+    const detailRow = (
+      <TableRow key={`${order.id}-detail`} className="bg-muted/20 hover:bg-muted/20">
+        <TableCell colSpan={colSpan} className="py-3 px-6">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+            <div><span className="text-muted-foreground font-medium">Address: </span>{(order.customers as any)?.address ?? '—'}</div>
+            <div><span className="text-muted-foreground font-medium">Courier: </span>{(order as any).courier ?? '—'}</div>
+            <div><span className="text-muted-foreground font-medium">Source ID: </span>{(order as any).source_id ?? '—'}</div>
+            <div><span className="text-muted-foreground font-medium">Remark: </span>{(order as any).remark ?? order.purchase_reason ?? '—'}</div>
+          </div>
+        </TableCell>
+      </TableRow>
+    )
+
+    return [mainRow, detailRow]
   }
 
-  function handleDateChange(e: React.ChangeEvent<HTMLInputElement>) {
-    setSelectedDate(e.target.value)
-    setPage(1)
-  }
-
-  function handleSearchChange(e: React.ChangeEvent<HTMLInputElement>) {
-    setSearch(e.target.value)
-    setPage(1)
-  }
-
-  const brandTabs = ['All', ...BRANDS]
+  const brandTabs = ['All', ...BRANDS, 'Unassigned']
+  const totalPages = data ? Math.ceil(data.count / PAGE_SIZE) : 0
 
   return (
     <div>
-      <PageHeader title="Daily Order" description={`${data?.count ?? 0} orders on ${formatDate(selectedDate)}`}>
+      <PageHeader title="Orders" description={`Orders: ${fmtRangeHeader(dateFrom, dateTo)}`}>
         <Button variant="outline" size="sm" onClick={exportCSV}>
           <FileDown className="h-4 w-4 mr-1" />Export
         </Button>
@@ -151,49 +353,90 @@ export default function OrdersPage() {
           <FileUp className="h-4 w-4 mr-1" />Import CSV
         </Button>
         <Button variant="outline" size="sm" asChild>
-          <Link href="/orders/import-history">
-            <History className="h-4 w-4 mr-1" />History
-          </Link>
+          <Link href="/orders/import-history"><History className="h-4 w-4 mr-1" />History</Link>
         </Button>
         <Button size="sm" onClick={() => setShowAddModal(true)}>
           <Plus className="h-4 w-4 mr-1" />Add Order
         </Button>
       </PageHeader>
 
-      {/* Date picker + search row */}
-      <div className="flex flex-wrap items-center gap-3 mb-4">
-        <div className="flex items-center gap-2">
-          <Calendar className="h-4 w-4 text-muted-foreground" />
+      {/* Quick presets + custom date range */}
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        {PRESETS.map(([label, key]) => (
+          <Button key={key} variant="outline" size="sm" className="h-8 text-xs" onClick={() => applyPreset(key)}>
+            {label}
+          </Button>
+        ))}
+        <div className="flex items-center gap-1.5 ml-1">
+          <Calendar className="h-4 w-4 text-muted-foreground shrink-0" />
           <input
-            type="date"
-            value={selectedDate}
-            onChange={handleDateChange}
-            className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+            type="date" value={dateFrom}
+            onChange={e => { setDateFrom(e.target.value); setPage(1) }}
+            className="h-8 rounded-md border border-input bg-background px-2 py-1 text-xs shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+          />
+          <span className="text-muted-foreground text-xs">–</span>
+          <input
+            type="date" value={dateTo}
+            onChange={e => { setDateTo(e.target.value); setPage(1) }}
+            className="h-8 rounded-md border border-input bg-background px-2 py-1 text-xs shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
           />
         </div>
+      </div>
+
+      {/* View mode toggle + day navigation + search */}
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <div className="flex rounded-md border overflow-hidden">
+          {(['day', 'week', 'month'] as ViewMode[]).map(m => (
+            <button
+              key={m} onClick={() => setViewMode(m)}
+              className={cn(
+                'px-3 py-1.5 text-sm font-medium capitalize transition-colors',
+                viewMode === m ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:bg-muted'
+              )}
+            >
+              {m}
+            </button>
+          ))}
+        </div>
+        {viewMode === 'day' && (
+          <div className="flex items-center gap-1">
+            <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => navigateDay(-1)}>
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <span className="text-sm font-medium px-2 min-w-[200px] text-center">
+              {new Date(dateFrom + 'T00:00:00').toLocaleDateString('en-MY', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
+            </span>
+            <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => navigateDay(1)}>
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
         <Input
-          placeholder="Search tracking #, customer name or phone…"
+          placeholder="Search tracking #, customer, phone…"
           value={search}
-          onChange={handleSearchChange}
-          className="h-9 w-72"
+          onChange={e => { setSearch(e.target.value); setPage(1) }}
+          className="h-8 w-64 text-sm ml-auto"
         />
       </div>
 
-      {/* Brand filter tabs */}
+      {/* Brand tabs */}
       <div className="flex flex-wrap gap-2 mb-4">
         {brandTabs.map(brand => {
-          const colors = brand !== 'All' ? BRAND_COLORS[brand] : null
+          const bc = brand !== 'All' && brand !== 'Unassigned' ? BRAND_COLORS[brand] : null
           const isActive = selectedBrand === brand
+          const s = brandStats[brand] ?? { count: 0, revenue: 0 }
           return (
             <button
               key={brand}
-              onClick={() => handleBrandChange(brand)}
+              onClick={() => { setSelectedBrand(brand); setPage(1) }}
               className={cn(
                 'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium border transition-colors',
                 isActive
-                  ? colors
-                    ? `${colors.bg} ${colors.text} ${colors.border}`
-                    : 'bg-primary text-primary-foreground border-primary'
+                  ? bc
+                    ? `${bc.bg} ${bc.text} ${bc.border}`
+                    : brand === 'Unassigned'
+                      ? 'bg-gray-100 text-gray-700 border-gray-300'
+                      : 'bg-primary text-primary-foreground border-primary'
                   : 'bg-background text-muted-foreground border-border hover:border-foreground/30'
               )}
             >
@@ -201,144 +444,157 @@ export default function OrdersPage() {
               <span className={cn(
                 'text-xs rounded-full px-1.5 py-0.5 font-bold',
                 isActive
-                  ? colors ? `${colors.bg} ${colors.text}` : 'bg-primary/20 text-primary-foreground'
+                  ? bc ? `${bc.bg} ${bc.text}` : 'bg-primary/20 text-primary-foreground'
                   : 'bg-muted text-muted-foreground'
               )}>
-                {brandCounts[brand] ?? 0}
+                {s.count}
               </span>
+              {s.revenue > 0 && <span className="text-xs opacity-60">{formatCurrency(s.revenue)}</span>}
             </button>
           )
         })}
       </div>
 
       {/* Summary stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <StatCard title="Total Orders" value={summaryStats.total} icon={ShoppingCart} />
-        <StatCard title="Total Revenue" value={summaryStats.revenue} isCurrency />
-        <StatCard
-          title="Settled"
-          value={formatCurrency(summaryStats.settled)}
-          className="border-green-200 bg-green-50"
-        />
-        <StatCard
-          title="Unsettled"
-          value={formatCurrency(summaryStats.unsettled)}
-          className="border-yellow-200 bg-yellow-50"
-        />
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
+        <StatCard title="Total Orders" value={stats.total} icon={ShoppingCart} />
+        <StatCard title="Total Revenue" value={stats.revenue} isCurrency />
+        <StatCard title="Settled" value={formatCurrency(stats.settled)} className="border-green-200 bg-green-50" />
+        <StatCard title="Unsettled" value={formatCurrency(stats.unsettled)} className="border-yellow-200 bg-yellow-50" />
+        <StatCard title="Avg Order" value={formatCurrency(stats.avg)} />
+        <StatCard title="New / Repeat" value={`${stats.newC} / ${stats.repeatC}`} />
       </div>
 
-      {isLoading ? (
-        <LoadingState />
-      ) : error ? (
-        <p className="text-destructive text-sm">Failed to load orders.</p>
-      ) : !data?.data.length ? (
-        <EmptyState
-          icon={ShoppingCart}
-          title="No orders found"
-          description={search ? 'Try a different search term.' : 'No orders for this date/filter.'}
-          action={{ label: 'Add Order', onClick: () => setShowAddModal(true) }}
-        />
-      ) : (
-        <>
-          <div className="rounded-lg border bg-white">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Time</TableHead>
-                  <TableHead>Tracking #</TableHead>
-                  <TableHead>Customer</TableHead>
-                  <TableHead>Brand</TableHead>
-                  <TableHead>Package</TableHead>
-                  <TableHead className="text-right">Amount</TableHead>
-                  <TableHead>Platform</TableHead>
-                  <TableHead>Payment</TableHead>
-                  <TableHead className="w-36" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data.data.map(order => {
-                  const projectName = (order.projects as any)?.name ?? null
-                  const brandColors = projectName ? BRAND_COLORS[projectName] : null
-                  const pkgName = order.package_snapshot?.name ?? order.package_name ?? '—'
-                  const isSettled = order.payment_status === 'Settled'
-
-                  return (
-                    <TableRow key={order.id}>
-                      <TableCell className="text-sm whitespace-nowrap text-muted-foreground">
-                        {order.created_at
-                          ? new Date(order.created_at).toLocaleTimeString('en-MY', { hour: '2-digit', minute: '2-digit' })
-                          : '—'}
-                      </TableCell>
-                      <TableCell className="text-xs font-mono text-muted-foreground">
-                        {order.tracking_number ?? '—'}
-                      </TableCell>
-                      <TableCell className="font-medium">
-                        {(order.customers as any)?.name ?? '—'}
-                        {(order.customers as any)?.phone && (
-                          <div className="text-xs text-muted-foreground">{(order.customers as any).phone}</div>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {brandColors && projectName ? (
-                          <span className={cn(
-                            'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold border',
-                            brandColors.bg, brandColors.text, brandColors.border
-                          )}>
-                            {projectName}
-                          </span>
-                        ) : projectName ? (
-                          <Badge variant="outline">{projectName}</Badge>
-                        ) : (
-                          <span className="text-muted-foreground text-xs">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-sm max-w-[160px] truncate">{pkgName}</TableCell>
-                      <TableCell className="text-right font-medium whitespace-nowrap">
-                        {formatCurrency(Number(order.total_price))}
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {order.channel ?? '—'}
-                      </TableCell>
-                      <TableCell>
-                        {isSettled ? (
-                          <Badge variant="success">Settled</Badge>
-                        ) : (
-                          <Badge variant="warning">Pending</Badge>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <OrderActions order={order} />
-                      </TableCell>
-                    </TableRow>
-                  )
-                })}
-              </TableBody>
-            </Table>
+      {/* MONTH VIEW — calendar grid */}
+      {viewMode === 'month' && (
+        <div className="rounded-lg border overflow-hidden mb-6">
+          <div className="grid grid-cols-7">
+            {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(d => (
+              <div key={d} className="bg-muted/50 text-center text-xs font-semibold py-2 text-muted-foreground border-b">{d}</div>
+            ))}
+            {calendarDays.map((day, i) => {
+              if (!day) return <div key={i} className="bg-muted/10 min-h-[90px] border-r border-b last:border-r-0" />
+              const dayOrders = ordersByDay[day] ?? []
+              const rev = dayOrders.reduce((s, o) => s + Number(o.total_price), 0)
+              const isExp = expandedDays.has(day)
+              const isToday = day === today
+              return (
+                <div
+                  key={day}
+                  className="min-h-[90px] p-2 border-r border-b last:border-r-0 bg-background hover:bg-muted/20 transition-colors cursor-pointer"
+                  onClick={() => toggleDay(day)}
+                >
+                  <div className={cn(
+                    'text-sm font-semibold mb-1 w-6 h-6 flex items-center justify-center rounded-full',
+                    isToday ? 'bg-primary text-primary-foreground' : 'text-foreground'
+                  )}>
+                    {new Date(day + 'T00:00:00').getDate()}
+                  </div>
+                  {dayOrders.length > 0 && (
+                    <>
+                      <div className="text-xs font-medium">{dayOrders.length} orders</div>
+                      <div className="text-xs text-muted-foreground">{formatCurrency(rev)}</div>
+                    </>
+                  )}
+                  {isExp && dayOrders.length > 0 && (
+                    <div className="mt-1.5 space-y-1 max-h-28 overflow-y-auto">
+                      {dayOrders.map(o => (
+                        <div key={o.id} className="text-xs bg-muted/60 rounded px-1.5 py-0.5 truncate" title={(o.customers as any)?.name}>
+                          {(o.customers as any)?.name ?? o.tracking_number ?? 'Order'}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
+        </div>
+      )}
 
-          {/* Pagination */}
-          {totalPages > 1 && (
-            <div className="flex items-center justify-between mt-4 text-sm text-muted-foreground">
-              <span>Page {page} of {totalPages}</span>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline" size="sm"
-                  disabled={page <= 1}
-                  onClick={() => setPage(p => p - 1)}
+      {/* WEEK VIEW — collapsible day sections with subtotal headers */}
+      {viewMode === 'week' && (
+        <div className="space-y-2 mb-6">
+          {sortedDays.length === 0 ? (
+            <EmptyState
+              icon={ShoppingCart} title="No orders"
+              description="No orders in this period."
+              action={{ label: 'Add Order', onClick: () => setShowAddModal(true) }}
+            />
+          ) : sortedDays.map(day => {
+            const orders = ordersByDay[day]
+            const rev = orders.reduce((s, o) => s + Number(o.total_price), 0)
+            const settled = orders.filter(o => o.payment_status === 'Settled').length
+            const pending = orders.length - settled
+            const isExp = expandedDays.has(day)
+            return (
+              <div key={day} className="rounded-lg border bg-white overflow-hidden">
+                <button
+                  className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/30 transition-colors text-left"
+                  onClick={() => toggleDay(day)}
                 >
-                  Previous
-                </Button>
-                <Button
-                  variant="outline" size="sm"
-                  disabled={page >= totalPages}
-                  onClick={() => setPage(p => p + 1)}
-                >
-                  Next
-                </Button>
+                  <div className="flex items-center gap-2">
+                    {isExp
+                      ? <ChevronUp className="h-4 w-4 text-muted-foreground shrink-0" />
+                      : <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />}
+                    <span className="font-semibold text-sm">{fmtDayHeading(day)}</span>
+                  </div>
+                  <div className="flex items-center gap-4 text-sm text-muted-foreground shrink-0">
+                    <span>{orders.length} orders</span>
+                    <span className="font-semibold text-foreground">{formatCurrency(rev)}</span>
+                    <span className="text-green-600 text-xs">{settled} settled</span>
+                    {pending > 0 && <span className="text-yellow-600 text-xs">{pending} pending</span>}
+                  </div>
+                </button>
+                {isExp && (
+                  <div className="border-t overflow-x-auto">
+                    <Table>
+                      <TableHeader><TableHeaders showDate={false} /></TableHeader>
+                      <TableBody>
+                        {orders.flatMap(order => renderOrderRows(order, false))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* DAY VIEW — paginated flat table */}
+      {viewMode === 'day' && (
+        isLoading ? <LoadingState /> :
+        error ? <p className="text-destructive text-sm">Failed to load orders.</p> :
+        !data?.data.length ? (
+          <EmptyState
+            icon={ShoppingCart} title="No orders found"
+            description={search ? 'Try a different search term.' : 'No orders for this date/filter.'}
+            action={{ label: 'Add Order', onClick: () => setShowAddModal(true) }}
+          />
+        ) : (
+          <>
+            <div className="rounded-lg border bg-white overflow-hidden">
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader><TableHeaders showDate={false} /></TableHeader>
+                  <TableBody>
+                    {data.data.flatMap(order => renderOrderRows(order, false))}
+                  </TableBody>
+                </Table>
               </div>
             </div>
-          )}
-        </>
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between mt-4 text-sm text-muted-foreground">
+                <span>Page {page} of {totalPages}</span>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>Previous</Button>
+                  <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}>Next</Button>
+                </div>
+              </div>
+            )}
+          </>
+        )
       )}
 
       <AddOrderModal open={showAddModal} onClose={() => setShowAddModal(false)} />
