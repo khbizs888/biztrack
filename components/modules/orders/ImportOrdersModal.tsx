@@ -197,7 +197,8 @@ function parseRows(
   rawData: Record<string, string>[],
   mapping: Record<string, string>,
   projects: Project[],
-  allPackages: Pkg[]
+  allPackages: Pkg[],
+  fallbackProjectId?: string
 ): ParsedRow[] {
   const parsed: ParsedRow[] = []
 
@@ -238,8 +239,9 @@ function parseRows(
     const courier     = mapCourier(courierRaw)
     const country     = countryRaw || 'MY'
 
+    // Use channel-matched project first; fall back to manually selected project
     const matched   = matchProject(channel, projects) ?? matchProject(channelRaw, projects)
-    const projectId = matched?.id ?? null
+    const projectId = matched?.id ?? fallbackProjectId ?? null
     const packageId = findPackageMatch(packageCode, packageName, projectId, allPackages)
 
     const errors: RowError[] = []
@@ -284,15 +286,16 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const fileNameRef  = useRef<string>('')
 
-  const [step, setStep]             = useState<Step>('upload')
-  const [csvHeaders, setCsvHeaders] = useState<string[]>([])
-  const [rawData, setRawData]       = useState<Record<string, string>[]>([])
-  const [mapping, setMapping]       = useState<Record<string, string>>({})
-  const [rows, setRows]             = useState<ParsedRow[]>([])
-  const [importing, setImporting]   = useState(false)
-  const [result, setResult]         = useState<ImportResult | null>(null)
-  const [saveName, setSaveName]     = useState('')
-  const [saving, setSaving]         = useState(false)
+  const [step, setStep]                   = useState<Step>('upload')
+  const [csvHeaders, setCsvHeaders]       = useState<string[]>([])
+  const [rawData, setRawData]             = useState<Record<string, string>[]>([])
+  const [mapping, setMapping]             = useState<Record<string, string>>({})
+  const [rows, setRows]                   = useState<ParsedRow[]>([])
+  const [importing, setImporting]         = useState(false)
+  const [result, setResult]               = useState<ImportResult | null>(null)
+  const [saveName, setSaveName]           = useState('')
+  const [saving, setSaving]               = useState(false)
+  const [selectedProjectId, setSelectedProjectId] = useState<string>('')
 
   const { data: projects = [] } = useQuery<Project[]>({
     queryKey: ['projects'],
@@ -341,7 +344,7 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
   // ── Mapping confirmed ─────────────────────────────────────────────────────
 
   function handleMappingConfirm() {
-    const parsed = parseRows(rawData, mapping, projects, allPackages)
+    const parsed = parseRows(rawData, mapping, projects, allPackages, selectedProjectId || undefined)
     if (!parsed.length) {
       toast.error('No valid rows found. Check that Tracking Number column is mapped and non-empty.')
       return
@@ -474,6 +477,7 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
     setRows([])
     setResult(null)
     setSaveName('')
+    setSelectedProjectId('')
     if (fileInputRef.current) fileInputRef.current.value = ''
     onClose()
   }
@@ -491,17 +495,37 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
 
         {/* ── Upload ─────────────────────────────────────────────────────────── */}
         {step === 'upload' && (
-          <div
-            className="border-2 border-dashed rounded-lg p-10 text-center cursor-pointer hover:border-primary hover:bg-muted/30 transition-colors"
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <Upload className="h-8 w-8 mx-auto mb-3 text-muted-foreground" />
-            <p className="text-sm font-medium">Click to upload a CSV file</p>
-            <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
-              Supports FIOR format: 线上单号, Date, Channel, Name, Phone number,<br />
-              Package, 商品编码, Total Price, Fior Prices, COD, 运费, 店铺, 收件人国家
-            </p>
-            <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleFileChange} />
+          <div className="space-y-4">
+            {/* Project selector */}
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Project (Brand)</label>
+              <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select project for this import…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {projects.map(p => (
+                    <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Orders will be linked to this project. Auto-detected from CSV channel if matched.
+              </p>
+            </div>
+
+            <div
+              className="border-2 border-dashed rounded-lg p-10 text-center cursor-pointer hover:border-primary hover:bg-muted/30 transition-colors"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <Upload className="h-8 w-8 mx-auto mb-3 text-muted-foreground" />
+              <p className="text-sm font-medium">Click to upload a CSV file</p>
+              <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
+                Supports FIOR format: 线上单号, Date, Channel, Name, Phone number,<br />
+                Package, 商品编码, Total Price, Fior Prices, COD, 运费, 店铺, 收件人国家
+              </p>
+              <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleFileChange} />
+            </div>
           </div>
         )}
 
