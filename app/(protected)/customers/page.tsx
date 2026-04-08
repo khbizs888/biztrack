@@ -38,8 +38,8 @@ type TagFilter = 'all' | CustomerTag
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function buildWALink(phone: string): string {
-  const cleaned = phone.replace(/[\s\-]/g, '')
+function buildWALink(phone: string | null | undefined): string {
+  const cleaned = (phone || '').replace(/[\s\-]/g, '')
   if (cleaned.startsWith('+60')) return `https://wa.me/${cleaned.slice(1)}`
   if (cleaned.startsWith('60'))  return `https://wa.me/${cleaned}`
   if (cleaned.startsWith('0'))   return `https://wa.me/6${cleaned}`
@@ -134,7 +134,7 @@ export default function CustomersPage() {
     if (dateTo)   list = list.filter(c => c.last_order_date && c.last_order_date <= dateTo)
     if (search) {
       const q = search.toLowerCase()
-      list = list.filter(c => c.name.toLowerCase().includes(q) || c.phone.includes(q))
+      list = list.filter(c => c.name.toLowerCase().includes(q) || (c.phone || '').includes(q))
     }
     list.sort((a, b) => {
       let av = 0, bv = 0
@@ -342,11 +342,13 @@ export default function CustomersPage() {
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1">
-                        <a href={buildWALink(c.phone)} target="_blank" rel="noopener noreferrer"
-                          title="WhatsApp"
-                          className="p-1.5 rounded-md bg-green-50 hover:bg-green-100 text-green-700 transition-colors">
-                          <MessageCircle className="h-3.5 w-3.5" />
-                        </a>
+                        {c.phone && (
+                          <a href={buildWALink(c.phone)} target="_blank" rel="noopener noreferrer"
+                            title="WhatsApp"
+                            className="p-1.5 rounded-md bg-green-50 hover:bg-green-100 text-green-700 transition-colors">
+                            <MessageCircle className="h-3.5 w-3.5" />
+                          </a>
+                        )}
                         <button onClick={() => openFollowUp(c)} title="Set follow-up"
                           className="p-1.5 rounded-md bg-amber-50 hover:bg-amber-100 text-amber-700 transition-colors">
                           <Calendar className="h-3.5 w-3.5" />

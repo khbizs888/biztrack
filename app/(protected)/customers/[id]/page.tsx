@@ -47,8 +47,8 @@ const STATUS_STYLES: Record<OrderStatus, string> = {
   cancelled:  'bg-gray-100 text-gray-500 border-gray-200',
 }
 
-function buildWALink(phone: string): string {
-  const cleaned = phone.replace(/[\s\-]/g, '')
+function buildWALink(phone: string | null | undefined): string {
+  const cleaned = (phone || '').replace(/[\s\-]/g, '')
   if (cleaned.startsWith('+60')) return `https://wa.me/${cleaned.slice(1)}`
   if (cleaned.startsWith('60'))  return `https://wa.me/${cleaned}`
   if (cleaned.startsWith('0'))   return `https://wa.me/6${cleaned}`
@@ -183,7 +183,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
   if (isLoading) return <LoadingSpinner />
   if (!customer) return <p className="text-muted-foreground">Customer not found.</p>
 
-  const waLink = buildWALink(customer.phone)
+  const waLink = customer.phone ? buildWALink(customer.phone) : null
   const memberSince = formatDate(customer.created_at)
   const lastContactedStr = customer.last_contacted_at
     ? format(new Date(customer.last_contacted_at), 'dd MMM yyyy, HH:mm')
@@ -199,12 +199,14 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
         title={customer.name}
         description={`Member since ${memberSince}`}
       >
-        <a href={waLink} target="_blank" rel="noopener noreferrer">
-          <Button variant="outline" size="sm" className="text-green-700 border-green-300 hover:bg-green-50">
-            <MessageCircle className="h-4 w-4 mr-1.5" />
-            WhatsApp
-          </Button>
-        </a>
+        {waLink && (
+          <a href={waLink} target="_blank" rel="noopener noreferrer">
+            <Button variant="outline" size="sm" className="text-green-700 border-green-300 hover:bg-green-50">
+              <MessageCircle className="h-4 w-4 mr-1.5" />
+              WhatsApp
+            </Button>
+          </a>
+        )}
         <Button variant="outline" size="sm" onClick={handleRefreshStats} disabled={isRefreshing}>
           <RefreshCw className={`h-4 w-4 mr-1.5 ${isRefreshing ? 'animate-spin' : ''}`} />
           Refresh
