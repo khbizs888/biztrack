@@ -2,8 +2,7 @@
 
 import { useState, useMemo, Fragment } from 'react'
 import { useOrders } from '@/lib/hooks/useOrders'
-import { useQuery } from '@tanstack/react-query'
-import { fetchProjects } from '@/app/actions/data'
+import { useProjects } from '@/lib/hooks/useProjects'
 import PageHeader from '@/components/shared/PageHeader'
 import StatCard from '@/components/shared/StatCard'
 import LoadingState from '@/components/shared/LoadingState'
@@ -15,7 +14,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { Plus, ShoppingCart, FileDown, FileUp, History, Calendar, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-react'
 import type { OrderFilters, Order } from '@/lib/types'
-import type { Project } from '@/lib/types'
 import AddOrderModal from '@/components/modules/orders/AddOrderModal'
 import ImportOrdersModal from '@/components/modules/orders/ImportOrdersModal'
 import OrderActions from '@/components/modules/orders/OrderActions'
@@ -123,10 +121,7 @@ export default function OrdersPage() {
   const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set())
   const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set())
 
-  const { data: projects = [] } = useQuery<Project[]>({
-    queryKey: ['projects'],
-    queryFn: fetchProjects,
-  })
+  const { projects } = useProjects()
 
   const brandProjectId = useMemo(() => {
     const map: Record<string, string> = {}
