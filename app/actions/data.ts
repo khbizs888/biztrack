@@ -350,25 +350,56 @@ export async function upsertCustomer(name: string, phone: string, address?: stri
 
 export async function bulkUpsertCustomers(rows: { name: string; phone: string; address?: string | null }[]): Promise<Record<string, string>> {
   const sb = createAdminClient()
-
-  // Deduplicate by phone so a single CSV with repeated phones doesn't conflict
-  const deduped = Object.values(
-    Object.fromEntries(rows.map(r => [r.phone, r]))
-  )
-
-  // UPSERT: insert new customers; on duplicate phone update the name so we
-  // always return a row (and its id) even when the customer already exists.
-  const { data: upserted, error } = await sb
-    .from('customers')
-    .upsert(
-      deduped.map(r => ({ name: r.name, phone: r.phone, address: r.address ?? null })),
-      { onConflict: 'phone' }
-    )
-    .select('id, phone')
-  if (error) throw new Error(error.message)
-
   const map: Record<string, string> = {}
-  upserted?.forEach(c => { map[c.phone] = c.id })
+
+  // Separate rows with and without phone
+  const withPhone    = rows.filter(r => r.phone && r.phone.trim() !== '')
+  const withoutPhone = rows.filter(r => !r.phone || r.phone.trim() === '')
+
+  // ── Customers with phone: deduplicate by phone then upsert ────────────────
+  if (withPhone.length > 0) {
+    const deduped = Object.values(
+      Object.fromEntries(withPhone.map(r => [r.phone, r]))
+    )
+    const { data: upserted, error } = await sb
+      .from('customers')
+      .upsert(
+        deduped.map(r => ({ name: r.name, phone: r.phone, address: r.address ?? null })),
+        { onConflict: 'phone' }
+      )
+      .select('id, phone')
+    if (error) throw new Error(error.message)
+    upserted?.forEach(c => { if (c.phone) map[c.phone] = c.id })
+  }
+
+  // ── Customers without phone: find by name, else insert ───────────────────
+  // Use a placeholder key so the import can still get a customer_id
+  for (const r of withoutPhone) {
+    const nameKey = `__noPhone__${r.name}`
+    if (map[nameKey]) continue // already processed this name in this batch
+
+    // Try to find existing customer by name (case-insensitive)
+    const { data: existing } = await sb
+      .from('customers')
+      .select('id')
+      .ilike('name', r.name)
+      .is('phone', null)
+      .limit(1)
+      .maybeSingle()
+
+    if (existing) {
+      map[nameKey] = existing.id
+    } else {
+      // Insert new customer without phone
+      const { data: inserted, error: insErr } = await sb
+        .from('customers')
+        .insert({ name: r.name, phone: null, address: r.address ?? null })
+        .select('id')
+        .single()
+      if (!insErr && inserted) map[nameKey] = inserted.id
+    }
+  }
+
   return map
 }
 

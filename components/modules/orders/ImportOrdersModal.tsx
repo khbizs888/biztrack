@@ -28,8 +28,8 @@ import type { Project } from '@/lib/types'
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 type Step = 'upload' | 'mapping' | 'preview' | 'done'
-type RowError = 'missing_name' | 'missing_phone' | 'invalid_price' | 'missing_date'
-type RowStatus = 'ready' | 'error'
+type RowError = 'missing_name' | 'invalid_price' | 'missing_date'
+type RowStatus = 'ready' | 'warning' | 'error' | 'skip'
 type CsvFormat = 'A' | 'B' | 'unknown'
 
 interface ParsedRow {
@@ -57,13 +57,20 @@ interface ParsedRow {
   errors: RowError[]
   status: RowStatus
   packageMatched: boolean
+  skipReason?: string
+  importWarning?: string
 }
 
 interface ImportResult {
   success: number
+  warnings: number
   skipped: number
   errors: number
   errorDetails: string[]
+  totalRevenue: number
+  prepaidCount: number
+  codCount: number
+  batchId: string | null
 }
 
 interface FieldDef {
@@ -110,20 +117,22 @@ const FORMAT_A_AUTO_KEYS: Record<string, string[]> = {
 }
 
 const FORMAT_B_AUTO_KEYS: Record<string, string[]> = {
-  row_number:    ['Number'],
-  track_2026:    ['Track 2026'],
-  track_2025:    ['Track 2025'],
-  date:          ['Date'],
-  customer_name: ['Receiver Name'],
-  phone:         ['Full Phone No'],
-  phone2:        ['Phone no'],
-  channel:       ['Channel'],
-  package:       ['Package'],
-  price:         ['Total Price'],
-  remark:        ['Remark', 'Purchase reason'],
-  courier:       ['Parcel'],
-  customer_type: ['new/repeat Manual'],
-  source_id:     ['Shopee Order No'],
+  row_number:      ['Number'],
+  track_2026:      ['Track 2026'],
+  track_2025:      ['Track 2025'],
+  date:            ['Date'],
+  customer_name:   ['Receiver Name'],
+  phone:           ['Full Phone No'],
+  phone2:          ['Phone no'],
+  channel:         ['Channel'],
+  package:         ['Package'],
+  price:           ['Total Price'],
+  remark:          ['Remark', 'Purchase reason'],
+  courier:         ['Parcel'],
+  customer_type:   ['new/repeat Manual'],
+  source_id:       ['Shopee Order No'],
+  payment_method:  ['Payment Method', 'Payment method', 'payment method'],
+  price_domain:    ['Price Domain', 'price domain', 'COD Amount'],
 }
 
 // ── Field definitions ──────────────────────────────────────────────────────────
@@ -132,7 +141,7 @@ const FIELD_DEFS_A: FieldDef[] = [
   { key: 'tracking',      label: 'Tracking Number',  required: false, autoKeys: FORMAT_A_AUTO_KEYS.tracking },
   { key: 'date',          label: 'Order Date',        required: true,  autoKeys: FORMAT_A_AUTO_KEYS.date },
   { key: 'customer_name', label: 'Customer Name',     required: true,  autoKeys: FORMAT_A_AUTO_KEYS.customer_name },
-  { key: 'phone',         label: 'Phone',             required: true,  autoKeys: FORMAT_A_AUTO_KEYS.phone },
+  { key: 'phone',         label: 'Phone',             required: false, autoKeys: FORMAT_A_AUTO_KEYS.phone },
   { key: 'channel',       label: 'Channel',           required: false, autoKeys: FORMAT_A_AUTO_KEYS.channel },
   { key: 'package',       label: 'Package Name',      required: false, autoKeys: FORMAT_A_AUTO_KEYS.package },
   { key: 'package_code',  label: 'Package Code',      required: false, autoKeys: FORMAT_A_AUTO_KEYS.package_code },
@@ -153,7 +162,7 @@ const FIELD_DEFS_B: FieldDef[] = [
   { key: 'track_2025',    label: 'Tracking (2025)',    required: false, autoKeys: FORMAT_B_AUTO_KEYS.track_2025 },
   { key: 'date',          label: 'Order Date',         required: true,  autoKeys: FORMAT_B_AUTO_KEYS.date },
   { key: 'customer_name', label: 'Customer Name',      required: true,  autoKeys: FORMAT_B_AUTO_KEYS.customer_name },
-  { key: 'phone',         label: 'Primary Phone',      required: true,  autoKeys: FORMAT_B_AUTO_KEYS.phone },
+  { key: 'phone',         label: 'Primary Phone',      required: false, autoKeys: FORMAT_B_AUTO_KEYS.phone },
   { key: 'phone2',        label: 'Secondary Phone',    required: false, autoKeys: FORMAT_B_AUTO_KEYS.phone2 },
   { key: 'channel',       label: 'Channel',            required: false, autoKeys: FORMAT_B_AUTO_KEYS.channel },
   { key: 'package',       label: 'Package Name',       required: false, autoKeys: FORMAT_B_AUTO_KEYS.package },
@@ -161,7 +170,9 @@ const FIELD_DEFS_B: FieldDef[] = [
   { key: 'remark',        label: 'Remark (COD check)', required: false, autoKeys: FORMAT_B_AUTO_KEYS.remark },
   { key: 'courier',       label: 'Courier',            required: false, autoKeys: FORMAT_B_AUTO_KEYS.courier },
   { key: 'customer_type', label: 'New / Repeat',       required: false, autoKeys: FORMAT_B_AUTO_KEYS.customer_type },
-  { key: 'source_id',     label: 'Shopee Order No',    required: false, autoKeys: FORMAT_B_AUTO_KEYS.source_id },
+  { key: 'source_id',       label: 'Shopee Order No',    required: false, autoKeys: FORMAT_B_AUTO_KEYS.source_id },
+  { key: 'payment_method',  label: 'Payment Method',     required: false, autoKeys: FORMAT_B_AUTO_KEYS.payment_method },
+  { key: 'price_domain',    label: 'Price Domain (COD)', required: false, autoKeys: FORMAT_B_AUTO_KEYS.price_domain },
 ]
 
 // ── Parse helpers ──────────────────────────────────────────────────────────────
@@ -255,9 +266,16 @@ function parseCod(raw: string): boolean {
   return raw.trim().toLowerCase().includes('cod')
 }
 
-function detectCodFromRemark(remark: string): boolean {
+function detectCodFromRemark(remark: string, paymentMethod?: string, priceDomain?: string): boolean {
   const r = remark.trim().toLowerCase()
-  return r.includes('cod') || r.includes('cash on delivery')
+  if (r.includes('cod') || r.includes('cash on delivery')) return true
+  if (paymentMethod && paymentMethod.trim().toLowerCase().includes('cod')) return true
+  // Price domain: if it has a numeric value it may be the COD payout amount
+  if (priceDomain && priceDomain.trim() !== '') {
+    const n = parseFloat(priceDomain.replace(/[^0-9.]/g, ''))
+    if (!isNaN(n) && n > 0) return true
+  }
+  return false
 }
 
 function mapCourier(raw: string): string {
@@ -276,7 +294,7 @@ function matchProject(channel: string, projects: Project[]): Project | undefined
 }
 
 function errorLabel(e: RowError): string {
-  return ({ missing_name: 'Missing name', missing_phone: 'Missing phone', invalid_price: 'Invalid price', missing_date: 'Missing date' })[e]
+  return ({ missing_name: 'Missing name', invalid_price: 'Invalid price', missing_date: 'Missing date' })[e]
 }
 
 function generateTrackingB(
@@ -296,28 +314,51 @@ function generateTrackingB(
 type Pkg = { id: string; project_id: string; name: string; code: string | null }
 
 function normalizePackageName(name: string): string {
-  return name.toLowerCase().trim().replace(/\s+/g, ' ')
+  // Normalize: lowercase, trim, collapse whitespace
+  // Preserve non-ASCII (Chinese chars etc.) — just normalize spacing
+  return name.trim().replace(/\s+/g, ' ').toLowerCase()
 }
 
-function findPackageMatch(codeRaw: string, nameRaw: string, projectId: string | null, allPackages: Pkg[]): string | null {
-  if (!projectId) return null
+interface PackageMatchResult {
+  id: string | null
+  matched: boolean
+  warning?: string
+}
+
+function findPackageMatch(codeRaw: string, nameRaw: string, projectId: string | null, allPackages: Pkg[]): PackageMatchResult {
+  if (!projectId) return { id: null, matched: false }
   const pool = allPackages.filter(p => p.project_id === projectId)
-  // 1. Try code match
+
+  // 1. Try code match (exact)
   if (codeRaw.trim()) {
     const byCode = pool.find(p => p.code && p.code.toLowerCase() === codeRaw.toLowerCase().trim())
-    if (byCode) return byCode.id
+    if (byCode) return { id: byCode.id, matched: true }
   }
-  if (!nameRaw.trim()) return null
+
+  if (!nameRaw.trim()) return { id: null, matched: false }
+
   const nl = normalizePackageName(nameRaw)
-  // 2. Exact normalized match
+
+  // 2. Exact normalized match (case-insensitive, spaces collapsed)
   const byExact = pool.find(p => normalizePackageName(p.name) === nl)
-  if (byExact) return byExact.id
-  // 3. Substring match (either direction)
-  const byFuzzy = pool.find(p => {
+  if (byExact) return { id: byExact.id, matched: true }
+
+  // 3. Contains match (either direction) — handles '1 Tin + 1 Box（Shopee）' vs '1 Tin + 1 Box'
+  const byContains = pool.find(p => {
     const pn = normalizePackageName(p.name)
     return pn.includes(nl) || nl.includes(pn)
   })
-  return byFuzzy?.id ?? null
+  if (byContains) return { id: byContains.id, matched: true }
+
+  // 4. Starts-with match (CSV name starts with DB name or vice versa)
+  const byStartsWith = pool.find(p => {
+    const pn = normalizePackageName(p.name)
+    return pn.startsWith(nl) || nl.startsWith(pn)
+  })
+  if (byStartsWith) return { id: byStartsWith.id, matched: true }
+
+  // No match — return warning but still allow import
+  return { id: null, matched: false, warning: `Package not matched: ${nameRaw}` }
 }
 
 function parseRows(
@@ -336,30 +377,44 @@ function parseRows(
 
     if (format === 'B') {
       // ── Format B (DD, Juji, NE) ────────────────────────────────────────────
-      const rowNumber    = get('row_number')
-      const track2026    = get('track_2026')
-      const track2025    = get('track_2025')
-      const dateRaw      = get('date')
-      const customerName = get('customer_name')
-      const phoneRaw     = get('phone')
-      const phone2Raw    = get('phone2')
-      const channelRaw   = get('channel')
-      const packageName  = get('package')
-      const priceRaw     = get('price')
-      const remarkRaw    = get('remark')
-      const courierRaw   = get('courier')
-      const customerType = get('customer_type')
-      const sourceIdRaw  = get('source_id')
+      const rowNumber       = get('row_number')
+      const track2026       = get('track_2026')
+      const track2025       = get('track_2025')
+      const dateRaw         = get('date')
+      const customerNameRaw = get('customer_name')
+      const phoneRaw        = get('phone')
+      const phone2Raw       = get('phone2')
+      const channelRaw      = get('channel')
+      const packageName     = get('package')
+      const priceRaw        = get('price')
+      const remarkRaw       = get('remark')
+      const courierRaw      = get('courier')
+      const customerType    = get('customer_type')
+      const sourceIdRaw     = get('source_id')
+      const paymentMethod   = get('payment_method')
+      const priceDomain     = get('price_domain')
 
-      // Skip conditions
-      if (!dateRaw) continue
-      if (!customerName && !phoneRaw && !phone2Raw) continue
+      // Only skip truly blank rows (both date AND customer name are empty)
+      if (!dateRaw && !customerNameRaw) continue
+
+      // Handle Shopee "username / Real Name" format
+      let customerName = customerNameRaw
+      let sourceId: string | null = sourceIdRaw || null
+      if (customerNameRaw.includes(' / ')) {
+        const parts = customerNameRaw.split(' / ')
+        const username = parts[0].trim()
+        const realName = parts.slice(1).join(' / ').trim()
+        customerName = realName || username
+        if (!sourceId) sourceId = username
+      }
 
       const totalPrice = parsePrice(priceRaw)
-      if (totalPrice === 0 || isNaN(totalPrice)) continue
+
+      // Skip truly blank rows only
+      if (!dateRaw && !customerName) continue
 
       const trackingNumber = generateTrackingB(rowNumber, track2026, track2025, projectName)
-      const isCod          = detectCodFromRemark(remarkRaw)
+      const isCod          = detectCodFromRemark(remarkRaw, paymentMethod, priceDomain)
       let phone            = normalizePhone(phoneRaw, 'B')
       if (!phone && phone2Raw) phone = normalizePhone(phone2Raw, 'B')
       const channel        = mapChannelB(channelRaw)
@@ -367,42 +422,55 @@ function parseRows(
       const isRepeat       = parseIsRepeat(customerType)
       const courier        = mapCourier(courierRaw)
 
-      // For Format B, always use fallback project (selected project)
-      const projectId  = fallbackProjectId ?? null
-      const packageId  = findPackageMatch('', packageName, projectId, allPackages)
-      const sourceId   = sourceIdRaw || null
+      // For Format B, ALWAYS use the selected project — this is critical
+      const projectId = fallbackProjectId ?? null
+      const pkgMatch  = findPackageMatch('', packageName, projectId, allPackages)
 
       const errors: RowError[] = []
-      if (!customerName)    errors.push('missing_name')
-      if (!phone)           errors.push('missing_phone')
-      if (!dateRaw)         errors.push('missing_date')
+      if (!customerName)     errors.push('missing_name')
+      if (!dateRaw)          errors.push('missing_date')
       if (isNaN(totalPrice)) errors.push('invalid_price')
 
+      // Determine row status
+      let status: RowStatus = 'ready'
+      let importWarning: string | undefined
+      let skipReason: string | undefined
+
+      if (errors.length > 0) {
+        status = 'error'
+        skipReason = errors.map(errorLabel).join(', ')
+      } else if (!pkgMatch.matched && packageName) {
+        status = 'warning'
+        importWarning = pkgMatch.warning
+      }
+
       parsed.push({
-        orderRef:      trackingNumber,
+        orderRef:       trackingNumber,
         date,
         customerName,
         phone,
         packageName,
         trackingNumber,
-        totalPrice:    isNaN(totalPrice) ? 0 : totalPrice,
-        listPrice:     null,
+        totalPrice:     isNaN(totalPrice) ? 0 : totalPrice,
+        listPrice:      null,
         channel,
-        address:       '',
+        address:        '',
         isRepeat,
         isCod,
-        codAmount:     null,
-        shippingFee:   null,
+        codAmount:      null,
+        shippingFee:    null,
         courier,
-        country:       'MY',
+        country:        'MY',
         projectId,
-        packageId,
-        productName:   packageName || channelRaw || '—',
-        remark:        remarkRaw,
+        packageId:      pkgMatch.id,
+        productName:    packageName || channelRaw || '—',
+        remark:         remarkRaw,
         sourceId,
         errors,
-        status:        errors.length > 0 ? 'error' : 'ready',
-        packageMatched: packageId !== null,
+        status,
+        packageMatched: pkgMatch.matched,
+        skipReason,
+        importWarning,
       })
     } else {
       // ── Format A (FIOR, KHH) ───────────────────────────────────────────────
@@ -423,14 +491,12 @@ function parseRows(
       const courierRaw     = get('courier')
       const remarkRaw      = get('remark')
 
-      // Skip conditions
-      if (!dateRaw) continue
-      if (!customerName && !phoneRaw) continue
+      // Skip only truly blank rows (date AND customer name both empty)
+      if (!dateRaw && !customerName) continue
 
       const totalPrice = parsePrice(priceRaw)
-      if (totalPrice === 0 || isNaN(totalPrice)) continue
 
-      // For Format A, also skip if no tracking number
+      // For Format A, skip if no tracking number (can't link without it)
       if (!trackingRaw) continue
 
       const phone      = normalizePhone(phoneRaw, 'A')
@@ -446,23 +512,35 @@ function parseRows(
       // Use channel-matched project first; fall back to manually selected project
       const matched   = matchProject(channel, projects) ?? matchProject(channelRaw, projects)
       const projectId = matched?.id ?? fallbackProjectId ?? null
-      const packageId = findPackageMatch(packageCode, packageName, projectId, allPackages)
+      const pkgMatch  = findPackageMatch(packageCode, packageName, projectId, allPackages)
 
       const errors: RowError[] = []
-      if (!customerName)    errors.push('missing_name')
-      if (!phone)           errors.push('missing_phone')
-      if (!dateRaw)         errors.push('missing_date')
+      if (!customerName)     errors.push('missing_name')
+      if (!dateRaw)          errors.push('missing_date')
       if (isNaN(totalPrice)) errors.push('invalid_price')
 
+      // Determine row status
+      let status: RowStatus = 'ready'
+      let importWarning: string | undefined
+      let skipReason: string | undefined
+
+      if (errors.length > 0) {
+        status = 'error'
+        skipReason = errors.map(errorLabel).join(', ')
+      } else if (!pkgMatch.matched && packageName) {
+        status = 'warning'
+        importWarning = pkgMatch.warning
+      }
+
       parsed.push({
-        orderRef:      trackingRaw,
+        orderRef:       trackingRaw,
         date,
         customerName,
         phone,
         packageName,
         trackingNumber: trackingRaw,
-        totalPrice:    isNaN(totalPrice) ? 0 : totalPrice,
-        listPrice:     isNaN(listPriceN) ? null : listPriceN,
+        totalPrice:     isNaN(totalPrice) ? 0 : totalPrice,
+        listPrice:      isNaN(listPriceN) ? null : listPriceN,
         channel,
         address,
         isRepeat,
@@ -472,13 +550,15 @@ function parseRows(
         courier,
         country:     'MY',
         projectId,
-        packageId,
+        packageId:   pkgMatch.id,
         productName: packageName || channelRaw || '—',
         remark:      remarkRaw,
         sourceId:    null,
         errors,
-        status:      errors.length > 0 ? 'error' : 'ready',
-        packageMatched: packageId !== null,
+        status,
+        packageMatched: pkgMatch.matched,
+        skipReason,
+        importWarning,
       })
     }
   }
@@ -595,18 +675,23 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
 
   async function handleImport() {
     setImporting(true)
-    const validRows  = rows.filter(r => r.status === 'ready')
+    // Import both 'ready' and 'warning' rows (warnings = unmatched package but still valid)
+    const validRows  = rows.filter(r => r.status === 'ready' || r.status === 'warning')
     let skippedCount = rows.filter(r => r.status === 'error').length
     let errorCount   = 0
     const errorDetails: string[] = []
 
-    const projectIdCounts: Record<string, number> = {}
-    for (const r of validRows) {
-      if (r.projectId) projectIdCounts[r.projectId] = (projectIdCounts[r.projectId] ?? 0) + 1
+    // Use the selected project as dominant project, fallback to most-common in rows
+    let dominantProjectId = selectedProjectId || null
+    if (!dominantProjectId) {
+      const projectIdCounts: Record<string, number> = {}
+      for (const r of validRows) {
+        if (r.projectId) projectIdCounts[r.projectId] = (projectIdCounts[r.projectId] ?? 0) + 1
+      }
+      dominantProjectId = Object.keys(projectIdCounts).sort(
+        (a, b) => projectIdCounts[b] - projectIdCounts[a]
+      )[0] ?? null
     }
-    const dominantProjectId = Object.keys(projectIdCounts).sort(
-      (a, b) => projectIdCounts[b] - projectIdCounts[a]
-    )[0] ?? null
 
     let batchId: string | null = null
     try {
@@ -614,8 +699,14 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
     } catch { /* non-blocking */ }
 
     try {
-      const customerRows = validRows.map(r => ({ name: r.customerName, phone: r.phone, address: r.address || null }))
-      const customerMap  = await bulkUpsertCustomers(customerRows)
+      // Build customer rows — pass phone as empty string when missing so the
+      // server action can handle the no-phone path correctly
+      const customerRows = validRows.map(r => ({
+        name:    r.customerName,
+        phone:   r.phone || '',
+        address: r.address || null,
+      }))
+      const customerMap = await bulkUpsertCustomers(customerRows)
 
       const trackingNumbers = validRows.map(r => r.trackingNumber).filter((t): t is string => t !== null)
       const existingTrackingArr = trackingNumbers.length > 0
@@ -629,9 +720,17 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
           skippedCount++
           continue
         }
+
+        // Resolve customer_id: try by phone first, then by no-phone name key
+        const customerKey = r.phone ? r.phone : `__noPhone__${r.customerName}`
+        const customerId  = customerMap[customerKey] ?? null
+
+        // project_id: ALWAYS use the selected project as ultimate fallback
+        const projectId = r.projectId ?? selectedProjectId ?? dominantProjectId ?? null
+
         toInsert.push({
-          customer_id:     customerMap[r.phone] ?? null,
-          project_id:      r.projectId,
+          customer_id:     customerId,
+          project_id:      projectId,
           package_id:      r.packageId,
           product_name:    r.productName,
           package_name:    r.packageName || null,
@@ -642,7 +741,8 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
           channel:         r.channel || null,
           is_new_customer: !r.isRepeat,
           tracking_number: r.trackingNumber,
-          import_status:   'success',
+          import_status:   r.status === 'warning' ? 'warning' : 'success',
+          import_error:    r.importWarning ?? null,
           quantity:        1,
           import_batch_id: batchId,
           is_cod:          r.isCod,
@@ -679,7 +779,32 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
       queryClient.invalidateQueries({ queryKey: ['dashboard'] })
       queryClient.invalidateQueries({ queryKey: ['import-batches'] })
 
-      setResult({ success: successCount, skipped: skippedCount, errors: errorCount, errorDetails })
+      // Build summary stats from the rows actually inserted
+      const insertedSet = new Set(insertedIds)
+      const insertedRows = validRows.filter(r =>
+        r.trackingNumber ? insertedSet.size > 0 : false
+      )
+      // Approximate stats from the toInsert payload (simpler)
+      const totalRevenue = (toInsert as Array<{total_price: number}>)
+        .reduce((sum, o) => sum + (o.total_price ?? 0), 0)
+      const prepaidCount = (toInsert as Array<{is_cod: boolean}>)
+        .filter(o => !o.is_cod).length
+      const codCount = (toInsert as Array<{is_cod: boolean}>)
+        .filter(o => o.is_cod).length
+      const warningCount = (toInsert as Array<{import_status: string}>)
+        .filter(o => o.import_status === 'warning').length
+
+      setResult({
+        success: successCount - warningCount,
+        warnings: warningCount,
+        skipped: skippedCount,
+        errors: errorCount,
+        errorDetails,
+        totalRevenue,
+        prepaidCount,
+        codCount,
+        batchId,
+      })
       setStep('done')
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : 'Import failed')
@@ -705,8 +830,10 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
     onClose()
   }
 
-  const readyRows   = rows.filter(r => r.status === 'ready')
-  const invalidRows = rows.filter(r => r.status === 'error')
+  const readyRows    = rows.filter(r => r.status === 'ready')
+  const warningRows  = rows.filter(r => r.status === 'warning')
+  const invalidRows  = rows.filter(r => r.status === 'error')
+  const importableRows = rows.filter(r => r.status === 'ready' || r.status === 'warning')
   const dialogWidth = step === 'preview' ? 'max-w-5xl' : step === 'mapping' ? 'max-w-2xl' : 'max-w-md'
   const currentFieldDefs = detectedFormat === 'B' ? FIELD_DEFS_B : FIELD_DEFS_A
 
@@ -864,12 +991,18 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
         {/* ── Preview ────────────────────────────────────────────────────────── */}
         {step === 'preview' && (
           <div className="space-y-3">
-            <div className="flex items-center gap-4 text-sm">
-              <span className="text-green-600 font-medium">{readyRows.length} ready to import</span>
+            <div className="flex items-center gap-4 text-sm flex-wrap">
+              <span className="text-green-600 font-medium">{readyRows.length} ready</span>
+              {warningRows.length > 0 && (
+                <span className="text-amber-600 font-medium flex items-center gap-1">
+                  <AlertCircle className="h-3.5 w-3.5" />
+                  {warningRows.length} with warnings (unmatched package)
+                </span>
+              )}
               {invalidRows.length > 0 && (
                 <span className="text-destructive font-medium flex items-center gap-1">
                   <AlertCircle className="h-3.5 w-3.5" />
-                  {invalidRows.length} with errors (will be skipped)
+                  {invalidRows.length} will be skipped
                 </span>
               )}
             </div>
@@ -890,16 +1023,19 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
                 </TableHeader>
                 <TableBody>
                   {rows.map((row, i) => {
-                    const hasError = row.errors.length > 0
-                    const matched  = projects.find(p => p.id === row.projectId)
+                    const hasError   = row.status === 'error'
+                    const hasWarning = row.status === 'warning'
+                    const isSkipped  = hasError
+                    const matched    = projects.find(p => p.id === row.projectId)
+                    const rowBg      = hasError ? 'bg-destructive/5' : hasWarning ? 'bg-amber-50' : undefined
                     return (
-                      <TableRow key={i} className={hasError ? 'bg-destructive/5' : undefined}>
+                      <TableRow key={i} className={rowBg}>
                         <TableCell className="py-1.5 font-mono text-muted-foreground text-[10px]">
                           {row.orderRef || '—'}
                         </TableCell>
                         <TableCell className="py-1.5">{row.date}</TableCell>
                         <TableCell className="py-1.5 font-medium">
-                          {row.customerName}
+                          {row.customerName || <span className="text-destructive">—</span>}
                           {row.isRepeat && (
                             <Badge variant="secondary" className="ml-1 text-[10px] px-1 py-0 h-4">
                               <RefreshCw className="h-2.5 w-2.5 mr-0.5" />Repeat
@@ -907,16 +1043,16 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
                           )}
                         </TableCell>
                         <TableCell className="py-1.5">
-                          {row.phone || <span className="text-destructive">—</span>}
+                          {row.phone || <span className="text-muted-foreground text-[10px]">—</span>}
                         </TableCell>
                         <TableCell className="py-1.5">
-                          <span className={!row.packageId ? 'text-amber-600' : ''}>
+                          <span className={row.packageMatched ? 'text-green-700' : row.packageName ? 'text-amber-600' : 'text-muted-foreground'}>
                             {row.packageName || '—'}
                           </span>
-                          {row.packageId
+                          {row.packageMatched
                             ? <span className="ml-1 text-green-600 text-[10px]">✓</span>
                             : row.packageName
-                              ? <span className="ml-1 text-amber-500 text-[10px]">?</span>
+                              ? <span className="ml-1 text-amber-500 text-[10px]" title={row.importWarning}>?</span>
                               : null
                           }
                         </TableCell>
@@ -941,9 +1077,17 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
                         </TableCell>
                         <TableCell className="py-1.5">
                           {hasError && (
-                            <span title={row.errors.map(errorLabel).join(', ')} className="text-destructive cursor-help">
+                            <span title={row.skipReason ?? row.errors.map(errorLabel).join(', ')} className="text-destructive cursor-help">
                               <AlertCircle className="h-3.5 w-3.5" />
                             </span>
+                          )}
+                          {hasWarning && (
+                            <span title={row.importWarning} className="text-amber-500 cursor-help">
+                              <AlertCircle className="h-3.5 w-3.5" />
+                            </span>
+                          )}
+                          {isSkipped && row.skipReason && (
+                            <span className="text-[9px] text-destructive block">{row.skipReason}</span>
                           )}
                         </TableCell>
                       </TableRow>
@@ -958,27 +1102,55 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
         {/* ── Done ───────────────────────────────────────────────────────────── */}
         {step === 'done' && result && (
           <div className="space-y-4 py-2">
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-4 gap-2">
               <div className="rounded-lg border bg-green-50 p-3 text-center">
                 <CheckCircle2 className="h-5 w-5 text-green-600 mx-auto mb-1" />
-                <p className="text-2xl font-bold text-green-700">{result.success}</p>
+                <p className="text-xl font-bold text-green-700">{result.success}</p>
                 <p className="text-xs text-muted-foreground">Imported</p>
+              </div>
+              <div className="rounded-lg border bg-amber-50 p-3 text-center">
+                <AlertCircle className="h-5 w-5 text-amber-500 mx-auto mb-1" />
+                <p className="text-xl font-bold text-amber-600">{result.warnings}</p>
+                <p className="text-xs text-muted-foreground">Warnings</p>
               </div>
               <div className="rounded-lg border bg-yellow-50 p-3 text-center">
                 <RefreshCw className="h-5 w-5 text-yellow-600 mx-auto mb-1" />
-                <p className="text-2xl font-bold text-yellow-700">{result.skipped}</p>
+                <p className="text-xl font-bold text-yellow-700">{result.skipped}</p>
                 <p className="text-xs text-muted-foreground">Skipped</p>
               </div>
               <div className="rounded-lg border bg-red-50 p-3 text-center">
                 <XCircle className="h-5 w-5 text-red-600 mx-auto mb-1" />
-                <p className="text-2xl font-bold text-red-700">{result.errors}</p>
+                <p className="text-xl font-bold text-red-700">{result.errors}</p>
                 <p className="text-xs text-muted-foreground">Errors</p>
+              </div>
+            </div>
+            {/* Revenue and payment breakdown */}
+            <div className="rounded-lg border bg-muted/30 p-3 space-y-1 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Total revenue imported</span>
+                <span className="font-semibold">RM {result.totalRevenue.toLocaleString('en-MY', { minimumFractionDigits: 2 })}</span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-muted-foreground">Prepaid orders</span>
+                <span>{result.prepaidCount}</span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-muted-foreground">COD orders</span>
+                <span>{result.codCount}</span>
               </div>
             </div>
             {result.errorDetails.length > 0 && (
               <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 space-y-1 max-h-28 overflow-auto">
                 {result.errorDetails.map((e, i) => <p key={i}>{e}</p>)}
               </div>
+            )}
+            {result.batchId && (
+              <a
+                href={`/orders?batch=${result.batchId}`}
+                className="block text-center text-xs text-primary underline underline-offset-2"
+              >
+                View imported orders &rarr;
+              </a>
             )}
           </div>
         )}
@@ -997,10 +1169,10 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
               <Button variant="outline" onClick={() => setStep('mapping')} disabled={importing}>
                 Back
               </Button>
-              <Button onClick={handleImport} disabled={importing || readyRows.length === 0}>
+              <Button onClick={handleImport} disabled={importing || importableRows.length === 0}>
                 {importing
                   ? 'Importing…'
-                  : `Import ${readyRows.length} Order${readyRows.length !== 1 ? 's' : ''}`}
+                  : `Import ${importableRows.length} Order${importableRows.length !== 1 ? 's' : ''}`}
               </Button>
             </>
           )}
