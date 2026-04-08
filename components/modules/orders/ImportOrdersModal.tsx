@@ -4,7 +4,6 @@ import { useState, useRef } from 'react'
 import Papa from 'papaparse'
 import { useQueryClient, useQuery } from '@tanstack/react-query'
 import {
-  fetchProjects,
   fetchActivePackages,
   bulkUpsertCustomers,
   bulkInsertOrders,
@@ -16,6 +15,8 @@ import {
   generateOrderId,
 } from '@/app/actions/data'
 import { processOrdersBatch } from '@/app/actions/order-processing'
+import { useProjects } from '@/lib/hooks/useProjects'
+import type { Project } from '@/lib/hooks/useProjects'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -24,7 +25,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { toast } from 'sonner'
 import { Upload, AlertCircle, RefreshCw, CheckCircle2, XCircle, Save, ChevronRight } from 'lucide-react'
-import type { Project } from '@/lib/types'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -594,10 +594,7 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
   const [selectedProjectId, setSelectedProjectId] = useState<string>('')
   const [detectedFormat, setDetectedFormat] = useState<CsvFormat>('unknown')
 
-  const { data: projects = [] } = useQuery<Project[]>({
-    queryKey: ['projects'],
-    queryFn:  fetchProjects,
-  })
+  const { projects } = useProjects()
 
   const { data: allPackages = [] } = useQuery({
     queryKey: ['packages-all'],
