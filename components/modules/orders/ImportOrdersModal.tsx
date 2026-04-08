@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import Papa from 'papaparse'
 import { useQueryClient, useQuery } from '@tanstack/react-query'
 import {
@@ -316,9 +316,12 @@ function generateTrackingB(
 type Pkg = { id: string; project_id: string; name: string; code: string | null }
 
 function normalizePackageName(name: string): string {
-  // Normalize: lowercase, trim, collapse whitespace
-  // Preserve non-ASCII (Chinese chars etc.) — just normalize spacing
-  return name.trim().replace(/\s+/g, ' ').toLowerCase()
+  // Strip BOM, zero-width spaces, and other invisible chars; collapse whitespace; lowercase
+  return name
+    .replace(/[\uFEFF\u200B-\u200D\u00A0]/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase()
 }
 
 interface PackageMatchResult {
@@ -330,6 +333,13 @@ interface PackageMatchResult {
 function findPackageMatch(codeRaw: string, nameRaw: string, projectId: string | null, allPackages: Pkg[]): PackageMatchResult {
   if (!projectId) return { id: null, matched: false }
   const pool = allPackages.filter(p => p.project_id === projectId)
+
+  console.log(`[pkgMatch] CSV="${nameRaw}" project=${projectId} pool=${pool.length} allPkgs=${allPackages.length}`)
+  if (pool.length > 0 && nameRaw.trim()) {
+    const nl = normalizePackageName(nameRaw)
+    console.log(`[pkgMatch]   normalized CSV="${nl}"`)
+    console.log(`[pkgMatch]   DB names:`, pool.map(p => `"${normalizePackageName(p.name)}"`).join(', '))
+  }
 
   // 1. Try code match (exact)
   if (codeRaw.trim()) {
@@ -596,10 +606,14 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
 
   const { projects } = useProjects()
 
-  const { data: allPackages = [] } = useQuery({
-    queryKey: ['packages-all'],
-    queryFn:  fetchActivePackages,
-  })
+  const [allPackages, setAllPackages] = useState<Pkg[]>([])
+  useEffect(() => {
+    if (!open) return
+    fetchActivePackages().then(pkgs => {
+      console.log('[ImportModal] fetchActivePackages returned', pkgs.length, 'packages:', pkgs.map(p => `${p.project_id}:${p.name}`))
+      setAllPackages(pkgs)
+    }).catch(err => console.error('[ImportModal] fetchActivePackages failed:', err))
+  }, [open])
 
   const { data: savedMappings = [], refetch: refetchMappings } = useQuery({
     queryKey: ['import-mappings'],
