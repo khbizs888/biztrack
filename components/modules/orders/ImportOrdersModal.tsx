@@ -30,6 +30,7 @@ import type { Project } from '@/lib/types'
 type Step = 'upload' | 'mapping' | 'preview' | 'done'
 type RowError = 'missing_name' | 'missing_phone' | 'invalid_price' | 'missing_date'
 type RowStatus = 'ready' | 'error'
+type CsvFormat = 'A' | 'B' | 'unknown'
 
 interface ParsedRow {
   orderRef: string
@@ -51,8 +52,11 @@ interface ParsedRow {
   projectId: string | null
   packageId: string | null
   productName: string
+  remark: string
+  sourceId: string | null
   errors: RowError[]
   status: RowStatus
+  packageMatched: boolean
 }
 
 interface ImportResult {
@@ -69,33 +73,104 @@ interface FieldDef {
   autoKeys: string[]
 }
 
+// ── Format detection ───────────────────────────────────────────────────────────
+
+function detectFormat(headers: string[]): CsvFormat {
+  const lower = headers.map(h => h.toLowerCase().trim())
+  if (lower.includes('线上单号')) return 'A'
+  if (lower.some(h => h.includes('receiver name'))) return 'B'
+  // fallback heuristics
+  if (lower.includes('full phone no') || lower.includes('parcel')) return 'B'
+  if (lower.includes('name') && lower.includes('phone number')) return 'A'
+  return 'unknown'
+}
+
+// ── Field auto-key maps ────────────────────────────────────────────────────────
+
+const FORMAT_A_AUTO_KEYS: Record<string, string[]> = {
+  tracking:      ['线上单号', 'Tracking Number', 'Tracking', 'AWB'],
+  date:          ['Date'],
+  customer_name: ['Name'],
+  phone:         ['Phone number', 'Phone no'],
+  channel:       ['Channel'],
+  package:       ['Package'],
+  package_code:  ['商品编码'],
+  price:         ['Total Price'],
+  list_price:    ['Fior Prices'],
+  address:       ['Address line (1)', 'Address'],
+  postcode:      ['Postcode (1)', 'Postcode'],
+  city:          ['City (1)', 'City'],
+  state:         ['State'],
+  cod:           ['COD'],
+  cod_amount:    ['代收货款金额'],
+  shipping_fee:  ['运费'],
+  courier:       ['店铺'],
+  customer_type: ['new/repeat Manual'],
+  remark:        ['Purchase reason'],
+}
+
+const FORMAT_B_AUTO_KEYS: Record<string, string[]> = {
+  row_number:    ['Number'],
+  track_2026:    ['Track 2026'],
+  track_2025:    ['Track 2025'],
+  date:          ['Date'],
+  customer_name: ['Receiver Name'],
+  phone:         ['Full Phone No'],
+  phone2:        ['Phone no'],
+  channel:       ['Channel'],
+  package:       ['Package'],
+  price:         ['Total Price'],
+  remark:        ['Remark', 'Purchase reason'],
+  courier:       ['Parcel'],
+  customer_type: ['new/repeat Manual'],
+  source_id:     ['Shopee Order No'],
+}
+
 // ── Field definitions ──────────────────────────────────────────────────────────
 
-const FIELD_DEFS: FieldDef[] = [
-  { key: 'tracking',      label: 'Tracking Number',  required: false, autoKeys: ['线上单号', 'Tracking Number', 'Tracking', 'AWB'] },
-  { key: 'date',          label: 'Order Date',        required: true,  autoKeys: ['Date'] },
-  { key: 'customer_name', label: 'Customer Name',     required: true,  autoKeys: ['Name'] },
-  { key: 'phone',         label: 'Phone',             required: true,  autoKeys: ['Phone number', 'Phone no'] },
-  { key: 'channel',       label: 'Channel / Brand',   required: false, autoKeys: ['Channel'] },
-  { key: 'package',       label: 'Package Name',      required: false, autoKeys: ['Package'] },
-  { key: 'package_code',  label: 'Package Code',      required: false, autoKeys: ['商品编码'] },
-  { key: 'price',         label: 'Total Price',       required: true,  autoKeys: ['Total Price'] },
-  { key: 'list_price',    label: 'List / FIOR Price', required: false, autoKeys: ['Fior Prices'] },
-  { key: 'address',       label: 'Address',           required: false, autoKeys: ['Address line (1)', 'Address'] },
-  { key: 'customer_type', label: 'New / Repeat',      required: false, autoKeys: ['new/repeat Manual'] },
-  { key: 'cod',           label: 'COD Indicator',     required: false, autoKeys: ['COD'] },
-  { key: 'cod_amount',    label: 'COD Amount',        required: false, autoKeys: ['代收货款金额'] },
-  { key: 'shipping_fee',  label: 'Shipping Fee',      required: false, autoKeys: ['运费'] },
-  { key: 'courier',       label: 'Courier',           required: false, autoKeys: ['店铺'] },
-  { key: 'country',       label: 'Country',           required: false, autoKeys: ['收件人国家'] },
+const FIELD_DEFS_A: FieldDef[] = [
+  { key: 'tracking',      label: 'Tracking Number',  required: false, autoKeys: FORMAT_A_AUTO_KEYS.tracking },
+  { key: 'date',          label: 'Order Date',        required: true,  autoKeys: FORMAT_A_AUTO_KEYS.date },
+  { key: 'customer_name', label: 'Customer Name',     required: true,  autoKeys: FORMAT_A_AUTO_KEYS.customer_name },
+  { key: 'phone',         label: 'Phone',             required: true,  autoKeys: FORMAT_A_AUTO_KEYS.phone },
+  { key: 'channel',       label: 'Channel',           required: false, autoKeys: FORMAT_A_AUTO_KEYS.channel },
+  { key: 'package',       label: 'Package Name',      required: false, autoKeys: FORMAT_A_AUTO_KEYS.package },
+  { key: 'package_code',  label: 'Package Code',      required: false, autoKeys: FORMAT_A_AUTO_KEYS.package_code },
+  { key: 'price',         label: 'Total Price',       required: true,  autoKeys: FORMAT_A_AUTO_KEYS.price },
+  { key: 'list_price',    label: 'List Price',        required: false, autoKeys: FORMAT_A_AUTO_KEYS.list_price },
+  { key: 'address',       label: 'Address',           required: false, autoKeys: FORMAT_A_AUTO_KEYS.address },
+  { key: 'cod',           label: 'COD Indicator',     required: false, autoKeys: FORMAT_A_AUTO_KEYS.cod },
+  { key: 'cod_amount',    label: 'COD Amount',        required: false, autoKeys: FORMAT_A_AUTO_KEYS.cod_amount },
+  { key: 'shipping_fee',  label: 'Shipping Fee',      required: false, autoKeys: FORMAT_A_AUTO_KEYS.shipping_fee },
+  { key: 'courier',       label: 'Courier',           required: false, autoKeys: FORMAT_A_AUTO_KEYS.courier },
+  { key: 'customer_type', label: 'New / Repeat',      required: false, autoKeys: FORMAT_A_AUTO_KEYS.customer_type },
+  { key: 'remark',        label: 'Remark',            required: false, autoKeys: FORMAT_A_AUTO_KEYS.remark },
+]
+
+const FIELD_DEFS_B: FieldDef[] = [
+  { key: 'row_number',    label: 'Row Number',         required: true,  autoKeys: FORMAT_B_AUTO_KEYS.row_number },
+  { key: 'track_2026',    label: 'Tracking (2026)',    required: false, autoKeys: FORMAT_B_AUTO_KEYS.track_2026 },
+  { key: 'track_2025',    label: 'Tracking (2025)',    required: false, autoKeys: FORMAT_B_AUTO_KEYS.track_2025 },
+  { key: 'date',          label: 'Order Date',         required: true,  autoKeys: FORMAT_B_AUTO_KEYS.date },
+  { key: 'customer_name', label: 'Customer Name',      required: true,  autoKeys: FORMAT_B_AUTO_KEYS.customer_name },
+  { key: 'phone',         label: 'Primary Phone',      required: true,  autoKeys: FORMAT_B_AUTO_KEYS.phone },
+  { key: 'phone2',        label: 'Secondary Phone',    required: false, autoKeys: FORMAT_B_AUTO_KEYS.phone2 },
+  { key: 'channel',       label: 'Channel',            required: false, autoKeys: FORMAT_B_AUTO_KEYS.channel },
+  { key: 'package',       label: 'Package Name',       required: false, autoKeys: FORMAT_B_AUTO_KEYS.package },
+  { key: 'price',         label: 'Total Price',        required: true,  autoKeys: FORMAT_B_AUTO_KEYS.price },
+  { key: 'remark',        label: 'Remark (COD check)', required: false, autoKeys: FORMAT_B_AUTO_KEYS.remark },
+  { key: 'courier',       label: 'Courier',            required: false, autoKeys: FORMAT_B_AUTO_KEYS.courier },
+  { key: 'customer_type', label: 'New / Repeat',       required: false, autoKeys: FORMAT_B_AUTO_KEYS.customer_type },
+  { key: 'source_id',     label: 'Shopee Order No',    required: false, autoKeys: FORMAT_B_AUTO_KEYS.source_id },
 ]
 
 // ── Parse helpers ──────────────────────────────────────────────────────────────
 
-function autoDetect(headers: string[]): Record<string, string> {
+function autoDetectMapping(headers: string[], format: CsvFormat): Record<string, string> {
+  const fieldDefs = format === 'B' ? FIELD_DEFS_B : FIELD_DEFS_A
   const normalized = headers.map(h => ({ original: h, lower: h.trim().toLowerCase() }))
   const result: Record<string, string> = {}
-  for (const field of FIELD_DEFS) {
+  for (const field of fieldDefs) {
     for (const key of field.autoKeys) {
       const found = normalized.find(h => h.lower === key.trim().toLowerCase())
       if (found) { result[field.key] = found.original; break }
@@ -123,14 +198,28 @@ function parsePrice(raw: string): number {
   return parseFloat(raw.replace(/RM/gi, '').replace(/,/g, '').trim())
 }
 
-function normalizePhone(raw: string): string {
-  let s = raw.replace(/[\s\-]/g, '')
-  // Fix Excel scientific notation: 0125039898 becomes 1.25039898E+08
+function normalizePhone(raw: string, format: CsvFormat = 'A'): string {
+  let s = raw.replace(/[\s\-\(\)]/g, '')
+  // Fix Excel scientific notation: 1.25039898E+08
   if (/^\d+\.?\d*[eE][+\-]?\d+$/.test(s)) {
     const n = Math.round(parseFloat(s))
     s = n.toString()
-    // Restore leading 0 for 9-digit Malaysian mobile numbers (01X-XXXXXXX)
-    if (s.length === 9 && s.startsWith('1')) s = '0' + s
+    if (s.length === 9 && s.startsWith('1')) s = '60' + s
+    else if (s.length === 10 && s.startsWith('01')) s = '6' + s
+    return s
+  }
+  if (format === 'B') {
+    // Format B: store as clean digits without leading country code issues
+    if (s.startsWith('60')) return s
+    if (s.startsWith('0')) return '6' + s  // 01X -> 601X
+    if (s.startsWith('1') && s.length === 9) return '60' + s
+  } else {
+    // Format A: keep original normalization
+    if (/^\d+\.?\d*[eE][+\-]?\d+$/.test(s)) {
+      const n = Math.round(parseFloat(s))
+      s = n.toString()
+      if (s.length === 9 && s.startsWith('1')) s = '0' + s
+    }
   }
   return s
 }
@@ -145,6 +234,17 @@ function mapChannel(raw: string): string {
   return raw.trim()
 }
 
+function mapChannelB(raw: string): string {
+  const c = raw.trim().toUpperCase()
+  if (c.includes('FB') || c.includes('FACEBOOK')) return 'Facebook'
+  if (c === 'SHOPEE') return 'Shopee'
+  if (c === 'WHATSAPP' || c === 'WA') return 'WhatsApp'
+  if (c === 'TIKTOK') return 'TikTok'
+  if (c === 'LAZADA') return 'Lazada'
+  if (c === 'INSTAGRAM' || c === 'IG') return 'Instagram'
+  return raw.trim()
+}
+
 function parseIsRepeat(raw: string): boolean {
   // FIOR CSV: 'New' = new customer; 'No' = repeat customer
   const s = raw.trim().toLowerCase()
@@ -155,13 +255,18 @@ function parseCod(raw: string): boolean {
   return raw.trim().toLowerCase().includes('cod')
 }
 
+function detectCodFromRemark(remark: string): boolean {
+  const r = remark.trim().toLowerCase()
+  return r.includes('cod') || r.includes('cash on delivery')
+}
+
 function mapCourier(raw: string): string {
   const s = raw.trim().toLowerCase()
-  if (s.includes('dhl'))                         return 'DHL'
+  if (s.includes('dhl'))                             return 'DHL'
   if (s.includes('poslaju') || s.includes('pos laju')) return 'Pos Laju'
-  if (s.includes('jnt') || s.includes('j&t'))   return 'J&T'
-  if (s.includes('gdex'))                        return 'GDex'
-  if (s.includes('ninja'))                       return 'Ninja Van'
+  if (s.includes('jnt') || s.includes('j&t'))       return 'J&T'
+  if (s.includes('gdex'))                            return 'GDex'
+  if (s.includes('ninja'))                           return 'Ninja Van'
   return raw.trim()
 }
 
@@ -174,23 +279,45 @@ function errorLabel(e: RowError): string {
   return ({ missing_name: 'Missing name', missing_phone: 'Missing phone', invalid_price: 'Invalid price', missing_date: 'Missing date' })[e]
 }
 
+function generateTrackingB(
+  rowNumber: string,
+  track2026: string,
+  track2025: string,
+  projectName: string,
+  year: number = 2026
+): string {
+  if (track2026.trim()) return track2026.trim()
+  if (track2025.trim()) return track2025.trim()
+  const num = parseInt(rowNumber, 10)
+  if (isNaN(num)) return `${projectName}${year}${rowNumber}`
+  return `${projectName}${year}${String(num).padStart(6, '0')}`
+}
+
 type Pkg = { id: string; project_id: string; name: string; code: string | null }
+
+function normalizePackageName(name: string): string {
+  return name.toLowerCase().trim().replace(/\s+/g, ' ')
+}
 
 function findPackageMatch(codeRaw: string, nameRaw: string, projectId: string | null, allPackages: Pkg[]): string | null {
   if (!projectId) return null
   const pool = allPackages.filter(p => p.project_id === projectId)
-  if (codeRaw) {
-    const byCode = pool.find(p => p.code && p.code.toLowerCase() === codeRaw.toLowerCase())
+  // 1. Try code match
+  if (codeRaw.trim()) {
+    const byCode = pool.find(p => p.code && p.code.toLowerCase() === codeRaw.toLowerCase().trim())
     if (byCode) return byCode.id
   }
-  if (nameRaw) {
-    const nl = nameRaw.toLowerCase()
-    const byExact = pool.find(p => p.name.toLowerCase() === nl)
-    if (byExact) return byExact.id
-    const byFuzzy = pool.find(p => p.name.toLowerCase().includes(nl) || nl.includes(p.name.toLowerCase()))
-    if (byFuzzy) return byFuzzy.id
-  }
-  return null
+  if (!nameRaw.trim()) return null
+  const nl = normalizePackageName(nameRaw)
+  // 2. Exact normalized match
+  const byExact = pool.find(p => normalizePackageName(p.name) === nl)
+  if (byExact) return byExact.id
+  // 3. Substring match (either direction)
+  const byFuzzy = pool.find(p => {
+    const pn = normalizePackageName(p.name)
+    return pn.includes(nl) || nl.includes(pn)
+  })
+  return byFuzzy?.id ?? null
 }
 
 function parseRows(
@@ -198,80 +325,162 @@ function parseRows(
   mapping: Record<string, string>,
   projects: Project[],
   allPackages: Pkg[],
-  fallbackProjectId?: string
+  fallbackProjectId?: string,
+  format: CsvFormat = 'A',
+  projectName: string = ''
 ): ParsedRow[] {
   const parsed: ParsedRow[] = []
 
   for (const raw of rawData) {
     const get = (key: string) => getField(raw, mapping, key)
 
-    // Skip rows with empty tracking number (线上单号 = order reference)
-    const trackingRaw = get('tracking')
-    if (!trackingRaw) continue
+    if (format === 'B') {
+      // ── Format B (DD, Juji, NE) ────────────────────────────────────────────
+      const rowNumber    = get('row_number')
+      const track2026    = get('track_2026')
+      const track2025    = get('track_2025')
+      const dateRaw      = get('date')
+      const customerName = get('customer_name')
+      const phoneRaw     = get('phone')
+      const phone2Raw    = get('phone2')
+      const channelRaw   = get('channel')
+      const packageName  = get('package')
+      const priceRaw     = get('price')
+      const remarkRaw    = get('remark')
+      const courierRaw   = get('courier')
+      const customerType = get('customer_type')
+      const sourceIdRaw  = get('source_id')
 
-    const customerName = get('customer_name')
-    if (!customerName) continue
+      // Skip conditions
+      if (!dateRaw) continue
+      if (!customerName && !phoneRaw && !phone2Raw) continue
 
-    const dateRaw        = get('date')
-    const channelRaw     = get('channel')
-    const phoneRaw       = get('phone')
-    const packageName    = get('package')
-    const packageCode    = get('package_code')
-    const priceRaw       = get('price')
-    const listPriceRaw   = get('list_price')
-    const address        = get('address')
-    const customerType   = get('customer_type')
-    const codRaw         = get('cod')
-    const codAmountRaw   = get('cod_amount')
-    const shippingFeeRaw = get('shipping_fee')
-    const courierRaw     = get('courier')
-    const countryRaw     = get('country')
+      const totalPrice = parsePrice(priceRaw)
+      if (totalPrice === 0 || isNaN(totalPrice)) continue
 
-    const phone       = normalizePhone(phoneRaw)
-    const totalPrice  = parsePrice(priceRaw)
-    const listPriceN  = listPriceRaw  ? parsePrice(listPriceRaw)  : NaN
-    const codAmountN  = codAmountRaw  ? parsePrice(codAmountRaw)  : NaN
-    const shippingN   = shippingFeeRaw ? parsePrice(shippingFeeRaw) : NaN
-    const date        = parseDate(dateRaw)
-    const channel     = mapChannel(channelRaw)
-    const isRepeat    = parseIsRepeat(customerType)
-    const isCod       = parseCod(codRaw)
-    const courier     = mapCourier(courierRaw)
-    const country     = countryRaw || 'MY'
+      const trackingNumber = generateTrackingB(rowNumber, track2026, track2025, projectName)
+      const isCod          = detectCodFromRemark(remarkRaw)
+      let phone            = normalizePhone(phoneRaw, 'B')
+      if (!phone && phone2Raw) phone = normalizePhone(phone2Raw, 'B')
+      const channel        = mapChannelB(channelRaw)
+      const date           = parseDate(dateRaw)
+      const isRepeat       = parseIsRepeat(customerType)
+      const courier        = mapCourier(courierRaw)
 
-    // Use channel-matched project first; fall back to manually selected project
-    const matched   = matchProject(channel, projects) ?? matchProject(channelRaw, projects)
-    const projectId = matched?.id ?? fallbackProjectId ?? null
-    const packageId = findPackageMatch(packageCode, packageName, projectId, allPackages)
+      // For Format B, always use fallback project (selected project)
+      const projectId  = fallbackProjectId ?? null
+      const packageId  = findPackageMatch('', packageName, projectId, allPackages)
+      const sourceId   = sourceIdRaw || null
 
-    const errors: RowError[] = []
-    if (!phone)            errors.push('missing_phone')
-    if (!dateRaw)          errors.push('missing_date')
-    if (isNaN(totalPrice)) errors.push('invalid_price')
+      const errors: RowError[] = []
+      if (!customerName)    errors.push('missing_name')
+      if (!phone)           errors.push('missing_phone')
+      if (!dateRaw)         errors.push('missing_date')
+      if (isNaN(totalPrice)) errors.push('invalid_price')
 
-    parsed.push({
-      orderRef:      trackingRaw,
-      date,
-      customerName,
-      phone,
-      packageName,
-      trackingNumber: trackingRaw,
-      totalPrice:    isNaN(totalPrice) ? 0 : totalPrice,
-      listPrice:     isNaN(listPriceN) ? null : listPriceN,
-      channel,
-      address,
-      isRepeat,
-      isCod,
-      codAmount:   isNaN(codAmountN) ? null : codAmountN,
-      shippingFee: isNaN(shippingN)  ? null : shippingN,
-      courier,
-      country,
-      projectId,
-      packageId,
-      productName: packageName || channelRaw || '—',
-      errors,
-      status: errors.length > 0 ? 'error' : 'ready',
-    })
+      parsed.push({
+        orderRef:      trackingNumber,
+        date,
+        customerName,
+        phone,
+        packageName,
+        trackingNumber,
+        totalPrice:    isNaN(totalPrice) ? 0 : totalPrice,
+        listPrice:     null,
+        channel,
+        address:       '',
+        isRepeat,
+        isCod,
+        codAmount:     null,
+        shippingFee:   null,
+        courier,
+        country:       'MY',
+        projectId,
+        packageId,
+        productName:   packageName || channelRaw || '—',
+        remark:        remarkRaw,
+        sourceId,
+        errors,
+        status:        errors.length > 0 ? 'error' : 'ready',
+        packageMatched: packageId !== null,
+      })
+    } else {
+      // ── Format A (FIOR, KHH) ───────────────────────────────────────────────
+      const trackingRaw    = get('tracking')
+      const dateRaw        = get('date')
+      const customerName   = get('customer_name')
+      const channelRaw     = get('channel')
+      const phoneRaw       = get('phone')
+      const packageName    = get('package')
+      const packageCode    = get('package_code')
+      const priceRaw       = get('price')
+      const listPriceRaw   = get('list_price')
+      const address        = get('address')
+      const customerType   = get('customer_type')
+      const codRaw         = get('cod')
+      const codAmountRaw   = get('cod_amount')
+      const shippingFeeRaw = get('shipping_fee')
+      const courierRaw     = get('courier')
+      const remarkRaw      = get('remark')
+
+      // Skip conditions
+      if (!dateRaw) continue
+      if (!customerName && !phoneRaw) continue
+
+      const totalPrice = parsePrice(priceRaw)
+      if (totalPrice === 0 || isNaN(totalPrice)) continue
+
+      // For Format A, also skip if no tracking number
+      if (!trackingRaw) continue
+
+      const phone      = normalizePhone(phoneRaw, 'A')
+      const listPriceN = listPriceRaw  ? parsePrice(listPriceRaw)  : NaN
+      const codAmountN = codAmountRaw  ? parsePrice(codAmountRaw)  : NaN
+      const shippingN  = shippingFeeRaw ? parsePrice(shippingFeeRaw) : NaN
+      const date       = parseDate(dateRaw)
+      const channel    = mapChannel(channelRaw)
+      const isRepeat   = parseIsRepeat(customerType)
+      const isCod      = parseCod(codRaw)
+      const courier    = mapCourier(courierRaw)
+
+      // Use channel-matched project first; fall back to manually selected project
+      const matched   = matchProject(channel, projects) ?? matchProject(channelRaw, projects)
+      const projectId = matched?.id ?? fallbackProjectId ?? null
+      const packageId = findPackageMatch(packageCode, packageName, projectId, allPackages)
+
+      const errors: RowError[] = []
+      if (!customerName)    errors.push('missing_name')
+      if (!phone)           errors.push('missing_phone')
+      if (!dateRaw)         errors.push('missing_date')
+      if (isNaN(totalPrice)) errors.push('invalid_price')
+
+      parsed.push({
+        orderRef:      trackingRaw,
+        date,
+        customerName,
+        phone,
+        packageName,
+        trackingNumber: trackingRaw,
+        totalPrice:    isNaN(totalPrice) ? 0 : totalPrice,
+        listPrice:     isNaN(listPriceN) ? null : listPriceN,
+        channel,
+        address,
+        isRepeat,
+        isCod,
+        codAmount:   isNaN(codAmountN) ? null : codAmountN,
+        shippingFee: isNaN(shippingN)  ? null : shippingN,
+        courier,
+        country:     'MY',
+        projectId,
+        packageId,
+        productName: packageName || channelRaw || '—',
+        remark:      remarkRaw,
+        sourceId:    null,
+        errors,
+        status:      errors.length > 0 ? 'error' : 'ready',
+        packageMatched: packageId !== null,
+      })
+    }
   }
 
   return parsed
@@ -296,6 +505,7 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
   const [saveName, setSaveName]           = useState('')
   const [saving, setSaving]               = useState(false)
   const [selectedProjectId, setSelectedProjectId] = useState<string>('')
+  const [detectedFormat, setDetectedFormat] = useState<CsvFormat>('unknown')
 
   const { data: projects = [] } = useQuery<Project[]>({
     queryKey: ['projects'],
@@ -325,9 +535,11 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
       transformHeader: h => h.replace(/^\uFEFF/, '').trim(),
       complete: res => {
         const headers = res.meta.fields ?? []
+        const format  = detectFormat(headers)
         setCsvHeaders(headers)
         setRawData(res.data)
-        setMapping(autoDetect(headers))
+        setDetectedFormat(format)
+        setMapping(autoDetectMapping(headers, format))
         setStep('mapping')
       },
       error: () => {
@@ -344,9 +556,18 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
   // ── Mapping confirmed ─────────────────────────────────────────────────────
 
   function handleMappingConfirm() {
-    const parsed = parseRows(rawData, mapping, projects, allPackages, selectedProjectId || undefined)
+    const selectedProject = projects.find(p => p.id === selectedProjectId)
+    const parsed = parseRows(
+      rawData,
+      mapping,
+      projects,
+      allPackages,
+      selectedProjectId || undefined,
+      detectedFormat,
+      selectedProject?.name || ''
+    )
     if (!parsed.length) {
-      toast.error('No valid rows found. Check that Tracking Number column is mapped and non-empty.')
+      toast.error('No valid rows found. Check that required columns are mapped and non-empty.')
       return
     }
     setRows(parsed)
@@ -430,6 +651,7 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
           handling_fee:    r.codAmount   ?? null,
           courier:         r.courier     || null,
           country:         r.country     || 'MY',
+          purchase_reason: r.remark      || null,
         })
       }
 
@@ -478,6 +700,7 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
     setResult(null)
     setSaveName('')
     setSelectedProjectId('')
+    setDetectedFormat('unknown')
     if (fileInputRef.current) fileInputRef.current.value = ''
     onClose()
   }
@@ -485,6 +708,7 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
   const readyRows   = rows.filter(r => r.status === 'ready')
   const invalidRows = rows.filter(r => r.status === 'error')
   const dialogWidth = step === 'preview' ? 'max-w-5xl' : step === 'mapping' ? 'max-w-2xl' : 'max-w-md'
+  const currentFieldDefs = detectedFormat === 'B' ? FIELD_DEFS_B : FIELD_DEFS_A
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -510,7 +734,7 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                Orders will be linked to this project. Auto-detected from CSV channel if matched.
+                Orders will be linked to this project. Required for Format B (DD/Juji/NE). Auto-detected from channel for Format A.
               </p>
             </div>
 
@@ -521,8 +745,8 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
               <Upload className="h-8 w-8 mx-auto mb-3 text-muted-foreground" />
               <p className="text-sm font-medium">Click to upload a CSV file</p>
               <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
-                Supports FIOR format: 线上单号, Date, Channel, Name, Phone number,<br />
-                Package, 商品编码, Total Price, Fior Prices, COD, 运费, 店铺, 收件人国家
+                Format A (FIOR/KHH): 线上单号, Date, Name, Phone number, COD…<br />
+                Format B (DD/Juji/NE): Number, Receiver Name, Full Phone No, Remark…
               </p>
               <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleFileChange} />
             </div>
@@ -535,6 +759,16 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
             <p className="text-xs text-muted-foreground">
               Map each field to the corresponding CSV column. Auto-detected from headers.
             </p>
+
+            {/* Format badge */}
+            {detectedFormat !== 'unknown' && (
+              <div className="flex items-center gap-2 text-xs">
+                <span className="font-medium">Detected Format:</span>
+                <Badge variant={detectedFormat === 'A' ? 'default' : 'secondary'}>
+                  {detectedFormat === 'A' ? 'Format A — FIOR/KHH style' : 'Format B — DD/Juji/NE style'}
+                </Badge>
+              </div>
+            )}
 
             {/* Load saved mapping */}
             {savedMappings.length > 0 && (
@@ -567,7 +801,7 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {FIELD_DEFS.map(field => {
+                  {currentFieldDefs.map(field => {
                     const mapped = mapping[field.key] ?? ''
                     return (
                       <TableRow key={field.key}>
@@ -676,8 +910,15 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
                           {row.phone || <span className="text-destructive">—</span>}
                         </TableCell>
                         <TableCell className="py-1.5">
-                          {row.packageName || '—'}
-                          {row.packageId && <span className="ml-1 text-green-600 text-[10px]">✓</span>}
+                          <span className={!row.packageId ? 'text-amber-600' : ''}>
+                            {row.packageName || '—'}
+                          </span>
+                          {row.packageId
+                            ? <span className="ml-1 text-green-600 text-[10px]">✓</span>
+                            : row.packageName
+                              ? <span className="ml-1 text-amber-500 text-[10px]">?</span>
+                              : null
+                          }
                         </TableCell>
                         <TableCell className="py-1.5">
                           {row.errors.includes('invalid_price')
