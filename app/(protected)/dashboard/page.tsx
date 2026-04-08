@@ -113,7 +113,7 @@ async function fetchDashboardData() {
 
     // Q3 – this month (rich: used for multiple KPIs, top packages, brand chart)
     sb.from('orders')
-      .select('total_price, profit, payment_status, is_cod, package_name, package_snapshot, project_id, projects(id, code)')
+      .select('total_price, profit, payment_status, is_cod, delivery_status, package_name, package_snapshot, project_id, projects(id, code)')
       .gte('order_date', thisMonthStart)
       .neq('status', 'cancelled'),
 
@@ -181,6 +181,26 @@ async function fetchDashboardData() {
   const thisMonthOrders   = thisMonthList.length
   const settledCount      = thisMonthList.filter(o => o.payment_status === 'Settled').length
   const settlementRate    = thisMonthOrders > 0 ? (settledCount / thisMonthOrders) * 100 : 0
+
+  // Book Sales = all non-cancelled orders; Settle Sales = only Settled
+  const thisMonthBookSales    = thisMonthRevenue
+  const thisMonthSettleSales  = thisMonthList
+    .filter(o => o.payment_status === 'Settled')
+    .reduce((s, o) => s + Number(o.total_price ?? 0), 0)
+
+  // COD performance this month
+  const codOrders = thisMonthList.filter(o => o.is_cod === true)
+  const codPendingDelivery = codOrders.filter(o => !o.delivery_status || o.delivery_status === 'pending_delivery' || o.delivery_status === 'out_for_delivery')
+  const codDelivered       = codOrders.filter(o => (o.delivery_status as string | null) === 'delivered' || o.payment_status === 'Settled')
+  const codReturned        = codOrders.filter(o => (o.delivery_status as string | null) === 'returned' || (o.delivery_status as string | null) === 'failed')
+  const codPerformance = {
+    pendingCount:   codPendingDelivery.length,
+    pendingAmount:  codPendingDelivery.reduce((s, o) => s + Number(o.total_price ?? 0), 0),
+    deliveredCount: codDelivered.length,
+    deliveredAmount:codDelivered.reduce((s, o) => s + Number(o.total_price ?? 0), 0),
+    returnedCount:  codReturned.length,
+    returnedAmount: codReturned.reduce((s, o) => s + Number(o.total_price ?? 0), 0),
+  }
 
   const lastMonthRevenue  = lastMonthList.reduce((s, o) => s + Number(o.total_price ?? 0), 0)
   const lastMonthProfit   = lastMonthList.reduce((s, o) => s + Number(o.profit      ?? 0), 0)
@@ -274,8 +294,9 @@ async function fetchDashboardData() {
     today:    { orders: todayOrders,   revenue: todayRevenue,   profit: todayProfit },
     yesterday:{ orders: yesterdayOrders, revenue: yesterdayRevenue },
     pendingCOD,
-    thisMonth: { revenue: thisMonthRevenue, profit: thisMonthProfit, orders: thisMonthOrders, settlementRate },
+    thisMonth: { revenue: thisMonthRevenue, profit: thisMonthProfit, orders: thisMonthOrders, settlementRate, bookSales: thisMonthBookSales, settleSales: thisMonthSettleSales },
     lastMonth: { revenue: lastMonthRevenue, profit: lastMonthProfit, orders: lastMonthOrders },
+    codPerformance,
     trendChartData,
     brandChartData,
     topPackages,
@@ -374,18 +395,34 @@ export default async function DashboardPage() {
         <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
           Monthly Overview
         </h2>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* This Month Revenue */}
-          <Card className="shadow-sm hover:shadow-md transition-shadow">
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+          {/* Book Sales */}
+          <Card className="shadow-sm hover:shadow-md transition-shadow border-l-4 border-l-blue-500">
             <CardContent className="pt-5">
               <div className="flex items-start justify-between">
                 <div>
-                  <p className="text-xs font-medium text-muted-foreground">This Month Revenue</p>
-                  <p className="text-2xl font-bold mt-1">{formatCurrency(d.thisMonth.revenue)}</p>
-                  <ChangeIndicator current={d.thisMonth.revenue} previous={d.lastMonth.revenue} suffix="vs last month" />
+                  <p className="text-xs font-medium text-muted-foreground">Book Sales</p>
+                  <p className="text-2xl font-bold mt-1">{formatCurrency(d.thisMonth.bookSales)}</p>
+                  <p className="text-xs text-muted-foreground mt-1">All orders incl. pending COD</p>
+                </div>
+                <div className="p-2 bg-blue-50 rounded-lg">
+                  <DollarSign className="h-5 w-5 text-blue-600" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Settle Sales */}
+          <Card className="shadow-sm hover:shadow-md transition-shadow border-l-4 border-l-green-500">
+            <CardContent className="pt-5">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground">Settle Sales</p>
+                  <p className="text-2xl font-bold mt-1">{formatCurrency(d.thisMonth.settleSales)}</p>
+                  <p className="text-xs text-muted-foreground mt-1">Confirmed payments only</p>
                 </div>
                 <div className="p-2 bg-green-50 rounded-lg">
-                  <DollarSign className="h-5 w-5 text-green-600" />
+                  <CheckCircle2 className="h-5 w-5 text-green-600" />
                 </div>
               </div>
             </CardContent>
@@ -513,6 +550,45 @@ export default async function DashboardPage() {
           </div>
         </section>
       )}
+
+      {/* ── COD Performance ───────────────────────────────────────────────────── */}
+      <section>
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+          COD Performance — This Month
+        </h2>
+        <div className="grid grid-cols-3 gap-4">
+          <Card className="shadow-sm border-amber-200 bg-amber-50/30">
+            <CardContent className="pt-4">
+              <div className="flex items-center gap-2 mb-1">
+                <Clock className="h-4 w-4 text-amber-600" />
+                <span className="text-xs font-semibold text-amber-800">Pending Delivery</span>
+              </div>
+              <p className="text-2xl font-bold text-amber-700">{d.codPerformance.pendingCount}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{formatCurrency(d.codPerformance.pendingAmount)}</p>
+            </CardContent>
+          </Card>
+          <Card className="shadow-sm border-green-200 bg-green-50/30">
+            <CardContent className="pt-4">
+              <div className="flex items-center gap-2 mb-1">
+                <CheckCircle2 className="h-4 w-4 text-green-600" />
+                <span className="text-xs font-semibold text-green-800">Delivered</span>
+              </div>
+              <p className="text-2xl font-bold text-green-700">{d.codPerformance.deliveredCount}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{formatCurrency(d.codPerformance.deliveredAmount)}</p>
+            </CardContent>
+          </Card>
+          <Card className="shadow-sm border-red-200 bg-red-50/30">
+            <CardContent className="pt-4">
+              <div className="flex items-center gap-2 mb-1">
+                <AlertTriangle className="h-4 w-4 text-red-500" />
+                <span className="text-xs font-semibold text-red-800">Returned / Failed</span>
+              </div>
+              <p className="text-2xl font-bold text-red-700">{d.codPerformance.returnedCount}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{formatCurrency(d.codPerformance.returnedAmount)}</p>
+            </CardContent>
+          </Card>
+        </div>
+      </section>
 
       {/* ── Row 4: Charts ──────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

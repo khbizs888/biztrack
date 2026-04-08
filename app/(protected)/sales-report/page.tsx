@@ -3,7 +3,7 @@
 import { useState, useTransition } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
-import { confirmPayment } from '@/app/actions/data'
+import { confirmPayment, updateCODDeliveryStatus, type DeliveryStatus } from '@/app/actions/data'
 import PageHeader from '@/components/shared/PageHeader'
 import StatCard from '@/components/shared/StatCard'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -33,6 +33,8 @@ interface SalesOrder {
   package_name: string | null
   status: string
   payment_status: string | null
+  is_cod: boolean | null
+  delivery_status: string | null
   customers: { name: string } | null
   projects: { name: string; code: string } | null
 }
@@ -62,6 +64,98 @@ function ConfirmPaymentButton({ orderId, onConfirmed }: { orderId: string; onCon
   )
 }
 
+// ─── Delivery Status Badge ────────────────────────────────────────────────────
+
+function DeliveryStatusBadge({ status }: { status: string | null }) {
+  if (!status || status === 'pending_delivery') {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 border border-gray-200">
+        Pending
+      </span>
+    )
+  }
+  if (status === 'out_for_delivery') {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-700 border border-yellow-200">
+        Out for Delivery
+      </span>
+    )
+  }
+  if (status === 'delivered') {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700 border border-green-200">
+        Delivered
+      </span>
+    )
+  }
+  if (status === 'returned') {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700 border border-red-200">
+        Returned
+      </span>
+    )
+  }
+  if (status === 'failed') {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700 border border-red-200">
+        Failed
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 border border-gray-200">
+      {status}
+    </span>
+  )
+}
+
+// ─── COD Delivery Action Buttons ──────────────────────────────────────────────
+
+function CODDeliveryButtons({ orderId, currentStatus, onUpdated }: {
+  orderId: string
+  currentStatus: string | null
+  onUpdated: () => void
+}) {
+  const [isPending, startTransition] = useTransition()
+  const isSettled  = currentStatus === 'delivered'
+  const isReturned = currentStatus === 'returned' || currentStatus === 'failed'
+
+  if (isSettled || isReturned) return null
+
+  return (
+    <div className="flex gap-1 flex-wrap">
+      <Button
+        size="sm"
+        variant="outline"
+        className="text-xs h-7 border-green-400 text-green-700 hover:bg-green-50"
+        disabled={isPending}
+        onClick={() => {
+          startTransition(async () => {
+            await updateCODDeliveryStatus(orderId, 'delivered' as DeliveryStatus)
+            onUpdated()
+          })
+        }}
+      >
+        {isPending ? '…' : 'Mark Delivered'}
+      </Button>
+      <Button
+        size="sm"
+        variant="outline"
+        className="text-xs h-7 border-red-300 text-red-600 hover:bg-red-50"
+        disabled={isPending}
+        onClick={() => {
+          startTransition(async () => {
+            await updateCODDeliveryStatus(orderId, 'returned' as DeliveryStatus)
+            onUpdated()
+          })
+        }}
+      >
+        {isPending ? '…' : 'Returned'}
+      </Button>
+    </div>
+  )
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function SalesReportPage() {
@@ -88,7 +182,7 @@ export default function SalesReportPage() {
     queryFn: async () => {
       let q = supabase
         .from('orders')
-        .select('id, order_date, total_price, cost_price, profit, package_snapshot, package_name, status, payment_status, customers(name), projects(name, code)')
+        .select('id, order_date, total_price, cost_price, profit, package_snapshot, package_name, status, payment_status, is_cod, delivery_status, customers(name), projects(name, code)')
         .gte('order_date', dateFrom)
         .lte('order_date', dateTo)
         .neq('status', 'cancelled')
@@ -201,10 +295,12 @@ export default function SalesReportPage() {
       {/* ── Summary cards ── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
         <StatCard
-          title="Total Revenue"
+          title="Book Sales"
           value={paymentFilter === 'all' ? (salesData?.totalRevenue ?? 0) : filteredRevenue}
           isCurrency
           icon={DollarSign}
+          description="All orders incl. pending"
+          className="border-blue-200 bg-blue-50"
         />
         <StatCard
           title="Total Profit"
@@ -333,6 +429,7 @@ export default function SalesReportPage() {
                   <TableHead>Package</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Payment</TableHead>
+                  <TableHead>Delivery</TableHead>
                   <TableHead className="text-right">Revenue</TableHead>
                   <TableHead className="text-right">Cost</TableHead>
                   <TableHead className="text-right">Profit</TableHead>
@@ -393,6 +490,13 @@ export default function SalesReportPage() {
                           <span className="text-xs text-muted-foreground">—</span>
                         )}
                       </TableCell>
+                      <TableCell>
+                        {order.is_cod ? (
+                          <DeliveryStatusBadge status={order.delivery_status} />
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
                       <TableCell className="text-right font-medium text-sm">
                         {formatCurrency(Number(order.total_price))}
                       </TableCell>
@@ -403,14 +507,22 @@ export default function SalesReportPage() {
                         {formatCurrency(profit)}
                       </TableCell>
                       <TableCell className="text-right">
-                        {isPending && (
+                        {order.is_cod ? (
+                          <CODDeliveryButtons
+                            orderId={order.id}
+                            currentStatus={order.delivery_status}
+                            onUpdated={() =>
+                              queryClient.invalidateQueries({ queryKey: ['sales-report'] })
+                            }
+                          />
+                        ) : isPending ? (
                           <ConfirmPaymentButton
                             orderId={order.id}
                             onConfirmed={() =>
                               queryClient.invalidateQueries({ queryKey: ['sales-report'] })
                             }
                           />
-                        )}
+                        ) : null}
                       </TableCell>
                     </TableRow>
                   )

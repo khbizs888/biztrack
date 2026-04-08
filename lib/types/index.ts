@@ -79,6 +79,7 @@ export interface Order {
   is_cod: boolean | null
   payment_status: string | null
   settled_at: string | null
+  delivery_status: string | null
   quantity: number | null
   customers?: Customer
   projects?: Project
@@ -110,6 +111,7 @@ export interface Package {
   name: string
   code: string | null
   price: number | null
+  cost: number | null
   custom_attributes: Record<string, unknown>
   is_active: boolean
   sort_order: number

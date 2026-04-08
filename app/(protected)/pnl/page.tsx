@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
 import { useProjects } from '@/lib/hooks/useProjects'
+import { getPnlSettings, savePnlSettings } from '@/app/actions/data'
 import PageHeader from '@/components/shared/PageHeader'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -17,7 +18,6 @@ import { Printer, ToggleLeft, ToggleRight, AlertCircle } from 'lucide-react'
 // Types & constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-const STORAGE_KEY = 'hoho_pnl_settings'
 const SPECIAL_PROJECTS = ['DD', 'NE', 'JUJI', 'KHH', 'FIOR']
 
 interface ProjectSettings {
@@ -53,21 +53,6 @@ type AllSettings = Record<string, ProjectSettings>
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
-
-function loadSettings(): AllSettings {
-  if (typeof window === 'undefined') return {}
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    return raw ? JSON.parse(raw) : {}
-  } catch {
-    return {}
-  }
-}
-
-function saveSettings(settings: AllSettings) {
-  if (typeof window === 'undefined') return
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(settings))
-}
 
 function getProjectSettings(all: AllSettings, projectId: string): ProjectSettings {
   return { ...DEFAULT_SETTINGS, ...(all[projectId] ?? {}) }
@@ -216,11 +201,36 @@ export default function PnLPage() {
   const [dateTo, setDateTo] = useState(endOfMonth(new Date()).toISOString().split('T')[0])
   const [selectedProjectId, setSelectedProjectId] = useState<string>('')
   const [allSettings, setAllSettings] = useState<AllSettings>({})
+  const [settingsLoading, setSettingsLoading] = useState(false)
 
-  // Load settings from localStorage on mount
+  // Load settings from DB when project changes
   useEffect(() => {
-    setAllSettings(loadSettings())
-  }, [])
+    if (!selectedProjectId) return
+    // Return cached settings if already loaded
+    if (allSettings[selectedProjectId]) return
+
+    setSettingsLoading(true)
+    getPnlSettings(selectedProjectId)
+      .then(dbSettings => {
+        // Map DB keys to ProjectSettings keys
+        const mapped: Partial<ProjectSettings> = {
+          productCostPct:    dbSettings.product_cost_pct  ?? DEFAULT_SETTINGS.productCostPct,
+          shippingPct:       dbSettings.shipping_cost_pct ?? DEFAULT_SETTINGS.shippingPct,
+          marketingPct:      dbSettings.marketing_cost_pct ?? DEFAULT_SETTINGS.marketingPct,
+          platformFeePct:    dbSettings.platform_fee_pct  ?? DEFAULT_SETTINGS.platformFeePct,
+          salaryAmount:      dbSettings.staff_cost_monthly ?? DEFAULT_SETTINGS.salaryAmount,
+        }
+        setAllSettings(prev => ({
+          ...prev,
+          [selectedProjectId]: { ...DEFAULT_SETTINGS, ...mapped },
+        }))
+      })
+      .catch(() => {
+        // Fall back to defaults silently
+      })
+      .finally(() => setSettingsLoading(false))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProjectId])
 
   const settings = selectedProjectId
     ? getProjectSettings(allSettings, selectedProjectId)
@@ -234,7 +244,15 @@ export default function PnLPage() {
           ...prev,
           [selectedProjectId]: { ...getProjectSettings(prev, selectedProjectId), [key]: value },
         }
-        saveSettings(next)
+        // Persist to DB (map back to DB key format)
+        const updated = next[selectedProjectId]
+        savePnlSettings(selectedProjectId, {
+          product_cost_pct:   updated.productCostPct,
+          shipping_cost_pct:  updated.shippingPct,
+          marketing_cost_pct: updated.marketingPct,
+          platform_fee_pct:   updated.platformFeePct,
+          staff_cost_monthly: updated.salaryAmount,
+        }).catch(console.error)
         return next
       })
     },
@@ -389,6 +407,10 @@ export default function PnLPage() {
       {!selectedProjectId ? (
         <div className="rounded-lg border bg-white p-8 text-center text-muted-foreground">
           Select a project to view its PnL statement.
+        </div>
+      ) : settingsLoading ? (
+        <div className="rounded-lg border bg-white p-8 text-center text-muted-foreground animate-pulse">
+          Loading settings…
         </div>
       ) : (
         <div className="space-y-4">
@@ -686,7 +708,7 @@ export default function PnLPage() {
 
           {/* ── Settings persistence note ── */}
           <p className="text-xs text-muted-foreground print:hidden">
-            All % settings and salary are saved automatically per project in your browser.
+            All % settings and salary are saved automatically per project in the database.
           </p>
         </div>
       )}

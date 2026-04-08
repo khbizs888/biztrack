@@ -1093,3 +1093,127 @@ export async function deletePackageAction(id: string) {
   const { error } = await sb.from('packages').delete().eq('id', id)
   if (error) throw new Error(error.message)
 }
+
+// ─────────────────────────────────────────────
+// Book Sales vs Settle Sales Metrics
+// ─────────────────────────────────────────────
+
+export interface SalesMetrics {
+  bookSales: number
+  settleSales: number
+  pendingSales: number
+  orderCount: number
+}
+
+export async function fetchSalesMetrics(
+  startDate: string,
+  endDate: string,
+  projectId?: string
+): Promise<SalesMetrics> {
+  const sb = createAdminClient()
+
+  let q = sb
+    .from('orders')
+    .select('total_price, payment_status')
+    .gte('order_date', startDate)
+    .lte('order_date', endDate)
+    .neq('status', 'cancelled')
+
+  if (projectId) q = q.eq('project_id', projectId)
+
+  const { data, error } = await q
+  if (error) throw new Error(error.message)
+
+  const rows = plain(data ?? []) as { total_price: string | number; payment_status: string | null }[]
+  const bookSales    = rows.reduce((s, o) => s + Number(o.total_price ?? 0), 0)
+  const settleSales  = rows.filter(o => o.payment_status === 'Settled').reduce((s, o) => s + Number(o.total_price ?? 0), 0)
+  const pendingSales = rows.filter(o => o.payment_status === 'Pending').reduce((s, o) => s + Number(o.total_price ?? 0), 0)
+
+  return { bookSales, settleSales, pendingSales, orderCount: rows.length }
+}
+
+// ─────────────────────────────────────────────
+// PnL Settings — DB-backed per project
+// ─────────────────────────────────────────────
+
+export interface PnlSettingsMap {
+  product_cost_pct: number
+  shipping_cost_pct: number
+  marketing_cost_pct: number
+  platform_fee_pct: number
+  staff_cost_monthly: number
+  [key: string]: number
+}
+
+export async function getPnlSettings(projectId: string): Promise<PnlSettingsMap> {
+  const sb = createAdminClient()
+  const { data, error } = await sb
+    .from('pnl_settings')
+    .select('key, value')
+    .eq('project_id', projectId)
+
+  const defaults: PnlSettingsMap = {
+    product_cost_pct: 30,
+    shipping_cost_pct: 5,
+    marketing_cost_pct: 10,
+    platform_fee_pct: 3,
+    staff_cost_monthly: 0,
+  }
+
+  if (error || !data || data.length === 0) return defaults
+
+  const result = { ...defaults }
+  for (const row of plain(data) as { key: string; value: number }[]) {
+    // DB stores decimals (0.30) but UI works in percentages (30)
+    const isPercent = row.key.endsWith('_pct')
+    result[row.key] = isPercent ? Number(row.value) * 100 : Number(row.value)
+  }
+  return result
+}
+
+export async function savePnlSettings(projectId: string, settings: Partial<PnlSettingsMap>): Promise<void> {
+  const sb = createAdminClient()
+  const rows = Object.entries(settings).map(([key, value]) => {
+    // Convert percentages back to decimals for storage
+    const isPercent = key.endsWith('_pct')
+    return {
+      project_id: projectId,
+      key,
+      value: isPercent ? (value as number) / 100 : value,
+      updated_at: new Date().toISOString(),
+    }
+  })
+
+  if (rows.length === 0) return
+
+  const { error } = await sb
+    .from('pnl_settings')
+    .upsert(rows, { onConflict: 'project_id,key' })
+  if (error) throw new Error(error.message)
+}
+
+// ─────────────────────────────────────────────
+// COD Delivery Status
+// ─────────────────────────────────────────────
+
+export type DeliveryStatus = 'pending_delivery' | 'out_for_delivery' | 'delivered' | 'returned' | 'failed'
+
+export async function updateCODDeliveryStatus(
+  orderId: string,
+  deliveryStatus: DeliveryStatus
+): Promise<{ success: boolean; error?: string }> {
+  const sb = createAdminClient()
+
+  const updates: Record<string, unknown> = { delivery_status: deliveryStatus }
+
+  if (deliveryStatus === 'delivered') {
+    updates.payment_status = 'Settled'
+    updates.settled_at = new Date().toISOString()
+  } else if (deliveryStatus === 'returned' || deliveryStatus === 'failed') {
+    updates.payment_status = 'Failed'
+  }
+
+  const { error } = await sb.from('orders').update(updates).eq('id', orderId)
+  if (error) return { success: false, error: error.message }
+  return { success: true }
+}

@@ -38,8 +38,8 @@ export async function processOrder(orderId: string): Promise<{ success: boolean;
       }
     }
 
-    // 4. Set cost_price from package (packages don't have a `cost` column yet,
-    //    so we use 0 as a safe default — the field can be edited manually later)
+    // 4. Set cost_price from package.cost (added in migration 015)
+    //    Falls back to 0 if package has no cost set yet.
     if (order.cost_price === 0 || order.cost_price === null) {
       const pkgCost = (pkg as Record<string, unknown> | null)?.cost
       updates.cost_price = typeof pkgCost === 'number' ? pkgCost : 0
