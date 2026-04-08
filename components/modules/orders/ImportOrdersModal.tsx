@@ -13,6 +13,7 @@ import {
   updateImportBatch,
   fetchImportMappings,
   saveImportMapping,
+  generateOrderId,
 } from '@/app/actions/data'
 import { processOrdersBatch } from '@/app/actions/order-processing'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
@@ -59,6 +60,7 @@ interface ParsedRow {
   packageMatched: boolean
   skipReason?: string
   importWarning?: string
+  needsAutoId?: boolean
 }
 
 interface ImportResult {
@@ -413,7 +415,11 @@ function parseRows(
       // Skip truly blank rows only
       if (!dateRaw && !customerName) continue
 
-      const trackingNumber = generateTrackingB(rowNumber, track2026, track2025, projectName)
+      const hasExistingTracking = track2026.trim() !== '' || track2025.trim() !== ''
+      const trackingNumber = hasExistingTracking
+        ? generateTrackingB(rowNumber, track2026, track2025, projectName)
+        : null
+      const needsAutoId    = !hasExistingTracking
       const isCod          = detectCodFromRemark(remarkRaw, paymentMethod, priceDomain)
       let phone            = normalizePhone(phoneRaw, 'B')
       if (!phone && phone2Raw) phone = normalizePhone(phone2Raw, 'B')
@@ -445,7 +451,7 @@ function parseRows(
       }
 
       parsed.push({
-        orderRef:       trackingNumber,
+        orderRef:       trackingNumber ?? `row-${rowNumber || parsed.length + 1}`,
         date,
         customerName,
         phone,
@@ -471,6 +477,7 @@ function parseRows(
         packageMatched: pkgMatch.matched,
         skipReason,
         importWarning,
+        needsAutoId,
       })
     } else {
       // ── Format A (FIOR, KHH) ───────────────────────────────────────────────
@@ -714,9 +721,33 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
         : []
       const existingTracking = new Set<string>(existingTrackingArr)
 
+      // Pre-generate order IDs for Format B rows that need auto-generated tracking numbers
+      // We do this atomically before building toInsert so each row gets a unique sequential ID
+      const resolvedTrackingNumbers = new Map<number, string>()
+      for (let i = 0; i < validRows.length; i++) {
+        const r = validRows[i]
+        if (r.needsAutoId) {
+          const pid = r.projectId ?? selectedProjectId ?? dominantProjectId
+          if (pid) {
+            try {
+              const autoId = await generateOrderId(pid)
+              resolvedTrackingNumbers.set(i, autoId)
+            } catch (genErr) {
+              console.error('Failed to generate order ID:', genErr)
+            }
+          }
+        }
+      }
+
       const toInsert: object[] = []
-      for (const r of validRows) {
-        if (r.trackingNumber && existingTracking.has(r.trackingNumber)) {
+      for (let i = 0; i < validRows.length; i++) {
+        const r = validRows[i]
+        // Use pre-generated tracking if needed, else use the parsed one
+        const trackingNumber = r.needsAutoId
+          ? (resolvedTrackingNumbers.get(i) ?? r.trackingNumber)
+          : r.trackingNumber
+
+        if (trackingNumber && existingTracking.has(trackingNumber)) {
           skippedCount++
           continue
         }
@@ -740,7 +771,7 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
           order_date:      r.date,
           channel:         r.channel || null,
           is_new_customer: !r.isRepeat,
-          tracking_number: r.trackingNumber,
+          tracking_number: trackingNumber,
           import_status:   r.status === 'warning' ? 'warning' : 'success',
           import_error:    r.importWarning ?? null,
           quantity:        1,

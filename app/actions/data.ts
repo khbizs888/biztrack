@@ -472,6 +472,7 @@ export async function createOrder(payload: {
   channel: string
   purchase_reason: string
   is_new_customer: boolean
+  tracking_number?: string | null
 }) {
   const sb = createAdminClient()
   const { data: inserted, error } = await sb
@@ -707,6 +708,17 @@ export async function updateOrderStatus(id: string, status: string) {
   const sb = createAdminClient()
   const { error } = await sb.from('orders').update({ status }).eq('id', id)
   if (error) throw new Error(error.message)
+}
+
+// ─────────────────────────────────────────────
+// Auto-generate Order ID (DD, Juji, NE)
+// ─────────────────────────────────────────────
+
+export async function generateOrderId(projectId: string): Promise<string> {
+  const sb = createAdminClient()
+  const { data, error } = await sb.rpc('generate_order_id', { p_project_id: projectId })
+  if (error) throw new Error(`Failed to generate order ID: ${error.message}`)
+  return data as string
 }
 
 export async function deleteOrder(id: string) {

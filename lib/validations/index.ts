@@ -25,6 +25,7 @@ export const orderSchema = z.object({
   total_price: z.coerce.number().min(0, 'Price must be positive'),
   status: z.enum(['pending', 'processing', 'shipped', 'delivered', 'cancelled']).default('pending'),
   order_date: z.string().min(1, 'Order date is required'),
+  tracking_number: z.string().optional().nullable(),
 })
 
 export const productSchema = z.object({
