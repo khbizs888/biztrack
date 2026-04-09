@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label'
 import { BRANDS, BRAND_COLORS } from '@/lib/constants'
 import { cn } from '@/lib/utils'
 import { Upload, BarChart3, Megaphone, Users, Target } from 'lucide-react'
-import { subDays, format, startOfMonth, endOfMonth, startOfDay } from 'date-fns'
+import { subDays, format, startOfMonth, endOfMonth } from 'date-fns'
 import SalesOverviewTab from './_components/SalesOverviewTab'
 import AdPerformanceTab from './_components/AdPerformanceTab'
 import CustomerInsightsTab from './_components/CustomerInsightsTab'
@@ -54,9 +54,6 @@ export default function AnalyticsPage() {
   const projectId = selectedBrand
     ? (projects.find(p => p.name === selectedBrand || p.code === selectedBrand)?.id ?? '')
     : ''
-
-  // Current year-month for goal tracking
-  const yearMonth = format(today, 'yyyy-MM')
 
   function applyQuickRange(opt: { days?: number; preset?: 'this_month' | 'last_month' }) {
     if (opt.preset === 'this_month') {
@@ -193,7 +190,7 @@ export default function AnalyticsPage() {
           <GoalTrackingTab
             projectId={projectId}
             selectedBrand={selectedBrand}
-            yearMonth={yearMonth}
+            projects={projects}
           />
         )}
       </div>

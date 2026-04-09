@@ -121,8 +121,27 @@ export interface GoalTrackingData {
   accumulated: number
   daysInMonth: number
   currentDay: number
-  byDay: { day: number; actual: number; accumulated: number; goal: number }[]
-  byBrand: { brand: string; goal: number; accumulated: number; progress: number }[]
+  /** goalLine is the linear trajectory from 0 → totalGoal over the month */
+  byDay: { day: number; actual: number; accumulated: number; goalLine: number }[]
+  byBrand: {
+    brand: string
+    projectId: string
+    goal: number
+    accumulated: number
+    progress: number
+    notes: string | null
+    /** per-brand running accumulated by day (0 after currentDay) */
+    byDay: { day: number; accumulated: number }[]
+  }[]
+}
+
+export interface MonthlyGoal {
+  id: string
+  project_id: string
+  year: number
+  month: number
+  revenue_target: number
+  notes: string | null
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -556,6 +575,45 @@ export async function fetchCustomerInsights(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Monthly Goals CRUD
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function fetchMonthlyGoals(year: number, month: number): Promise<MonthlyGoal[]> {
+  const sb = createAdminClient()
+  const { data, error } = await sb
+    .from('monthly_goals')
+    .select('*')
+    .eq('year', year)
+    .eq('month', month)
+  if (error) throw new Error(error.message)
+  return plain(data ?? [])
+}
+
+export async function saveMonthlyGoal(
+  projectId: string,
+  year: number,
+  month: number,
+  revenueTarget: number,
+  notes?: string,
+): Promise<void> {
+  const sb = createAdminClient()
+  const { error } = await sb
+    .from('monthly_goals')
+    .upsert(
+      {
+        project_id: projectId,
+        year,
+        month,
+        revenue_target: revenueTarget,
+        notes: notes ?? null,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'project_id,year,month' },
+    )
+  if (error) throw new Error(error.message)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Goal Tracking
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -564,68 +622,125 @@ export async function fetchGoalTracking(
   yearMonth: string, // 'yyyy-MM'
 ): Promise<GoalTrackingData> {
   const sb = createAdminClient()
+  const [yearStr, monthStr] = yearMonth.split('-')
+  const year = parseInt(yearStr, 10)
+  const month = parseInt(monthStr, 10)
   const monthStart = `${yearMonth}-01`
   const daysInMon = getDaysInMonth(parseISO(monthStart))
   const monthEnd = `${yearMonth}-${String(daysInMon).padStart(2, '0')}`
-  const todayDay = Math.min(getDate(new Date()), daysInMon)
 
-  // Ad spend goals for this month
-  let adQ = sb
-    .from('daily_ad_spend')
-    .select('date, goal_sales, project_id, projects(name, code)')
-    .gte('date', monthStart)
-    .lte('date', monthEnd)
-  if (projectId) adQ = adQ.eq('project_id', projectId)
-  const { data: adRows } = await adQ
+  // Determine how far into the month we are
+  const now = new Date()
+  const isCurrentMonth = now.getFullYear() === year && (now.getMonth() + 1) === month
+  const isFutureMonth =
+    year > now.getFullYear() ||
+    (year === now.getFullYear() && month > now.getMonth() + 1)
+  const todayDay = isCurrentMonth ? getDate(now) : isFutureMonth ? 0 : daysInMon
 
-  // Orders for this month
+  // ── Fetch goals from monthly_goals table (not daily_ad_spend) ───────────────
+  let goalsQ = sb
+    .from('monthly_goals')
+    .select('project_id, revenue_target, notes')
+    .eq('year', year)
+    .eq('month', month)
+  if (projectId) goalsQ = goalsQ.eq('project_id', projectId)
+  const { data: goalRows } = await goalsQ
+
+  // ── All projects (to show brands with zero goal set) ────────────────────────
+  const { data: allProjects } = await sb
+    .from('projects')
+    .select('id, name, code')
+    .order('name')
+
+  // ── Orders for this month ───────────────────────────────────────────────────
   let ordQ = sb
     .from('orders')
-    .select('order_date, total_price, project_id, projects(name, code)')
+    .select('order_date, total_price, project_id')
     .gte('order_date', monthStart)
     .lte('order_date', monthEnd)
     .neq('status', 'cancelled')
   if (projectId) ordQ = ordQ.eq('project_id', projectId)
   const { data: orders } = await ordQ
 
-  // Total goal for the month (sum all daily goals)
-  const totalGoal = (adRows ?? []).reduce((s, r) => s + Number(r.goal_sales ?? 0), 0)
-  const accumulated = (orders ?? []).reduce((s, o) => s + Number(o.total_price), 0)
+  // ── Build per-project map ───────────────────────────────────────────────────
+  type BrandData = {
+    brand: string
+    projectId: string
+    goal: number
+    accumulated: number
+    notes: string | null
+    dailyRevenue: Record<number, number>
+  }
 
-  // Daily accumulated chart
-  const byDay: { day: number; actual: number; accumulated: number; goal: number }[] = []
+  const projectsToShow = projectId
+    ? (allProjects ?? []).filter(p => p.id === projectId)
+    : (allProjects ?? [])
+
+  const brandMap: Record<string, BrandData> = {}
+  for (const p of projectsToShow) {
+    brandMap[p.id] = {
+      brand: p.code,
+      projectId: p.id,
+      goal: 0,
+      accumulated: 0,
+      notes: null,
+      dailyRevenue: {},
+    }
+  }
+
+  for (const g of goalRows ?? []) {
+    if (brandMap[g.project_id]) {
+      brandMap[g.project_id].goal = Number(g.revenue_target ?? 0)
+      brandMap[g.project_id].notes = g.notes ?? null
+    }
+  }
+
+  for (const o of orders ?? []) {
+    const pid = o.project_id as string
+    if (!pid || !brandMap[pid]) continue
+    brandMap[pid].accumulated += Number(o.total_price)
+    const day = parseInt((o.order_date as string).split('-')[2], 10)
+    brandMap[pid].dailyRevenue[day] = (brandMap[pid].dailyRevenue[day] ?? 0) + Number(o.total_price)
+  }
+
+  const totalGoal = Object.values(brandMap).reduce((s, b) => s + b.goal, 0)
+  const accumulated = Object.values(brandMap).reduce((s, b) => s + b.accumulated, 0)
+
+  // ── Combined daily chart data ───────────────────────────────────────────────
+  const byDay: { day: number; actual: number; accumulated: number; goalLine: number }[] = []
   let runningTotal = 0
   for (let d = 1; d <= daysInMon; d++) {
-    const dayStr = `${yearMonth}-${String(d).padStart(2, '0')}`
-    const dayGoal = (adRows ?? [])
-      .filter(r => r.date === dayStr)
-      .reduce((s, r) => s + Number(r.goal_sales ?? 0), 0)
-    const dayActual = d <= todayDay
-      ? (orders ?? []).filter(o => o.order_date === dayStr).reduce((s, o) => s + Number(o.total_price), 0)
-      : 0
-    runningTotal += d <= todayDay ? dayActual : 0
-    byDay.push({ day: d, actual: dayActual, accumulated: runningTotal, goal: totalGoal })
+    const dayRevenue = Object.values(brandMap).reduce(
+      (s, b) => s + (b.dailyRevenue[d] ?? 0), 0,
+    )
+    const actual = d <= todayDay ? dayRevenue : 0
+    if (d <= todayDay) runningTotal += actual
+    byDay.push({
+      day: d,
+      actual,
+      accumulated: runningTotal,
+      goalLine: totalGoal > 0 ? (totalGoal / daysInMon) * d : 0,
+    })
   }
 
-  // Per-brand breakdown
-  const brandGoals: Record<string, { goal: number; accumulated: number; brand: string }> = {}
-  for (const r of adRows ?? []) {
-    const proj = r.projects as unknown as { name: string; code: string } | null
-    const code = proj?.code ?? 'Unknown'
-    if (!brandGoals[code]) brandGoals[code] = { brand: code, goal: 0, accumulated: 0 }
-    brandGoals[code].goal += Number(r.goal_sales ?? 0)
-  }
-  for (const o of orders ?? []) {
-    const proj = o.projects as unknown as { name: string; code: string } | null
-    const code = proj?.code ?? 'Unknown'
-    if (!brandGoals[code]) brandGoals[code] = { brand: code, goal: 0, accumulated: 0 }
-    brandGoals[code].accumulated += Number(o.total_price)
-  }
-
-  const byBrand = Object.values(brandGoals).map(b => ({
-    ...b,
-    progress: safeDivide(b.accumulated, b.goal) * 100,
-  }))
+  // ── Per-brand breakdown with individual daily series ────────────────────────
+  const byBrand = Object.values(brandMap).map(b => {
+    const brandByDay: { day: number; accumulated: number }[] = []
+    let running = 0
+    for (let d = 1; d <= daysInMon; d++) {
+      if (d <= todayDay) running += b.dailyRevenue[d] ?? 0
+      brandByDay.push({ day: d, accumulated: d <= todayDay ? running : 0 })
+    }
+    return {
+      brand: b.brand,
+      projectId: b.projectId,
+      goal: b.goal,
+      accumulated: b.accumulated,
+      progress: safeDivide(b.accumulated, b.goal) * 100,
+      notes: b.notes,
+      byDay: brandByDay,
+    }
+  })
 
   return plain({ totalGoal, accumulated, daysInMonth: daysInMon, currentDay: todayDay, byDay, byBrand })
 }
