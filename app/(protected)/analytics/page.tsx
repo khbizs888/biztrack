@@ -3,203 +3,207 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
-import PageHeader from '@/components/shared/PageHeader'
-import StatCard from '@/components/shared/StatCard'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import {
-  AreaChart, Area, BarChart, Bar, LineChart, Line,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
-} from 'recharts'
-import { formatCurrency } from '@/lib/utils'
-import { format, subDays, eachDayOfInterval, parseISO } from 'date-fns'
-import { DollarSign, ShoppingCart, TrendingUp, Percent } from 'lucide-react'
+import { BRANDS, BRAND_COLORS } from '@/lib/constants'
+import { cn } from '@/lib/utils'
+import { Upload, BarChart3, Megaphone, Users, Target } from 'lucide-react'
+import { subDays, format, startOfMonth, endOfMonth, startOfDay } from 'date-fns'
+import SalesOverviewTab from './_components/SalesOverviewTab'
+import AdPerformanceTab from './_components/AdPerformanceTab'
+import CustomerInsightsTab from './_components/CustomerInsightsTab'
+import GoalTrackingTab from './_components/GoalTrackingTab'
+import AdSpendImportModal from './_components/AdSpendImportModal'
+
+type Tab = 'sales' | 'ads' | 'customers' | 'goals'
+
+const TAB_CONFIG = [
+  { id: 'sales' as Tab, label: 'Sales Overview', icon: BarChart3 },
+  { id: 'ads' as Tab, label: 'Ad Performance', icon: Megaphone },
+  { id: 'customers' as Tab, label: 'Customer Insights', icon: Users },
+  { id: 'goals' as Tab, label: 'Goal Tracking', icon: Target },
+]
+
+const QUICK_RANGES = [
+  { label: 'Last 7d', days: 7 },
+  { label: 'Last 30d', days: 30 },
+  { label: 'This Month', preset: 'this_month' as const },
+  { label: 'Last Month', preset: 'last_month' as const },
+]
 
 export default function AnalyticsPage() {
   const supabase = createClient()
-  const [dateFrom, setDateFrom] = useState(subDays(new Date(), 29).toISOString().split('T')[0])
-  const [dateTo, setDateTo] = useState(new Date().toISOString().split('T')[0])
-  const [projectId, setProjectId] = useState('')
-  const [adSpend, setAdSpend] = useState('')
 
-  const { data: projects } = useQuery({
+  const today = new Date()
+  const [selectedBrand, setSelectedBrand] = useState('')
+  const [activeTab, setActiveTab] = useState<Tab>('sales')
+  const [dateFrom, setDateFrom] = useState(format(subDays(today, 29), 'yyyy-MM-dd'))
+  const [dateTo, setDateTo] = useState(format(today, 'yyyy-MM-dd'))
+  const [showImport, setShowImport] = useState(false)
+
+  const { data: projects = [] } = useQuery({
     queryKey: ['projects'],
     queryFn: async () => {
-      const { data } = await supabase.from('projects').select('*').order('name')
+      const { data } = await supabase.from('projects').select('id, name, code').order('name')
       return data ?? []
     },
   })
 
-  const { data: analyticsData } = useQuery({
-    queryKey: ['analytics', dateFrom, dateTo, projectId],
-    queryFn: async () => {
-      let q = supabase
-        .from('orders')
-        .select('*, projects(name,code), customers(name)')
-        .gte('order_date', dateFrom)
-        .lte('order_date', dateTo)
-        .neq('status', 'cancelled')
-      if (projectId) q = q.eq('project_id', projectId)
-      const { data: orders } = await q
+  // Map brand code → project id
+  const projectId = selectedBrand
+    ? (projects.find(p => p.name === selectedBrand || p.code === selectedBrand)?.id ?? '')
+    : ''
 
-      const days = eachDayOfInterval({ start: parseISO(dateFrom), end: parseISO(dateTo) })
-      const byDay = days.map(d => {
-        const key = format(d, 'yyyy-MM-dd')
-        const dayOrders = orders?.filter(o => o.order_date === key) ?? []
-        return {
-          date: format(d, 'dd MMM'),
-          revenue: dayOrders.reduce((s, o) => s + Number(o.total_price), 0),
-          orders: dayOrders.length,
-        }
-      })
+  // Current year-month for goal tracking
+  const yearMonth = format(today, 'yyyy-MM')
 
-      const byProject: Record<string, number> = {}
-      orders?.forEach(o => {
-        const name = (o.projects as any)?.name ?? 'Unknown'
-        byProject[name] = (byProject[name] ?? 0) + Number(o.total_price)
-      })
-
-      const byCustomer: Record<string, { name: string; spend: number }> = {}
-      orders?.forEach((o: any) => {
-        const cid = o.customer_id ?? 'unknown'
-        if (!byCustomer[cid]) byCustomer[cid] = { name: o.customers?.name ?? 'Unknown', spend: 0 }
-        byCustomer[cid].spend += Number(o.total_price)
-      })
-      const topCustomers = Object.values(byCustomer)
-        .sort((a, b) => b.spend - a.spend)
-        .slice(0, 10)
-
-      const totalRevenue = orders?.reduce((s, o) => s + Number(o.total_price), 0) ?? 0
-      const totalOrders = orders?.length ?? 0
-      const aov = totalOrders ? totalRevenue / totalOrders : 0
-
-      return {
-        byDay,
-        byProject: Object.entries(byProject).map(([name, revenue]) => ({ name, revenue })),
-        topCustomers,
-        totalRevenue,
-        totalOrders,
-        aov,
-      }
-    },
-  })
-
-  const roas = adSpend && Number(adSpend) > 0
-    ? (analyticsData?.totalRevenue ?? 0) / Number(adSpend)
-    : null
-
-  const interval = Math.max(1, Math.floor((analyticsData?.byDay.length ?? 1) / 6))
+  function applyQuickRange(opt: { days?: number; preset?: 'this_month' | 'last_month' }) {
+    if (opt.preset === 'this_month') {
+      setDateFrom(format(startOfMonth(today), 'yyyy-MM-dd'))
+      setDateTo(format(today, 'yyyy-MM-dd'))
+    } else if (opt.preset === 'last_month') {
+      const lm = new Date(today.getFullYear(), today.getMonth() - 1, 1)
+      setDateFrom(format(startOfMonth(lm), 'yyyy-MM-dd'))
+      setDateTo(format(endOfMonth(lm), 'yyyy-MM-dd'))
+    } else if (opt.days) {
+      setDateFrom(format(subDays(today, opt.days - 1), 'yyyy-MM-dd'))
+      setDateTo(format(today, 'yyyy-MM-dd'))
+    }
+  }
 
   return (
-    <div className="space-y-6">
-      <PageHeader title="Sales Analytics" />
+    <div className="space-y-0">
+      {/* Page title */}
+      <div className="mb-4">
+        <h1 className="text-2xl font-bold tracking-tight">Analytics Command Center</h1>
+        <p className="text-sm text-muted-foreground mt-0.5">Live calculations from your orders database</p>
+      </div>
 
-      <div className="flex flex-wrap gap-3 items-end">
-        <div>
-          <Label className="text-xs mb-1 block">From</Label>
-          <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="w-36" />
+      {/* Sticky top bar */}
+      <div className="sticky top-0 z-10 bg-background border-b pb-3 pt-1 mb-6 space-y-3">
+        {/* Brand toggle + Import */}
+        <div className="flex flex-wrap items-center gap-2 justify-between">
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              onClick={() => setSelectedBrand('')}
+              className={cn(
+                'px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors',
+                selectedBrand === ''
+                  ? 'bg-primary text-primary-foreground border-primary'
+                  : 'border-border hover:bg-muted',
+              )}
+            >
+              All Brands
+            </button>
+            {BRANDS.map(brand => (
+              <button
+                key={brand}
+                onClick={() => setSelectedBrand(brand === selectedBrand ? '' : brand)}
+                className={cn(
+                  'px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors',
+                  selectedBrand === brand
+                    ? `${BRAND_COLORS[brand].bg} ${BRAND_COLORS[brand].text} ${BRAND_COLORS[brand].border}`
+                    : 'border-border hover:bg-muted',
+                )}
+              >
+                {brand}
+              </button>
+            ))}
+          </div>
+          <Button size="sm" variant="outline" onClick={() => setShowImport(true)}>
+            <Upload className="h-3.5 w-3.5 mr-1.5" />
+            Import Ad Spend
+          </Button>
         </div>
-        <div>
-          <Label className="text-xs mb-1 block">To</Label>
-          <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="w-36" />
+
+        {/* Date range */}
+        <div className="flex flex-wrap items-end gap-2">
+          <div>
+            <Label className="text-xs mb-1 block">From</Label>
+            <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="h-8 w-36 text-sm" />
+          </div>
+          <div>
+            <Label className="text-xs mb-1 block">To</Label>
+            <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="h-8 w-36 text-sm" />
+          </div>
+          <div className="flex gap-1.5 flex-wrap">
+            {QUICK_RANGES.map(r => (
+              <button
+                key={r.label}
+                onClick={() => applyQuickRange(r)}
+                className="h-8 px-3 rounded-md text-xs border border-border hover:bg-muted transition-colors"
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
         </div>
-        <div>
-          <Label className="text-xs mb-1 block">Project</Label>
-          <Select value={projectId || 'all'} onValueChange={v => setProjectId(v === 'all' ? '' : v)}>
-            <SelectTrigger className="w-40"><SelectValue placeholder="All Projects" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Projects</SelectItem>
-              {projects?.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-        <div>
-          <Label className="text-xs mb-1 block">Ad Spend (RM)</Label>
-          <Input type="number" placeholder="0.00" value={adSpend} onChange={e => setAdSpend(e.target.value)} className="w-32" />
+
+        {/* Tab navigation */}
+        <div className="flex gap-1 border-b -mb-3 pb-0">
+          {TAB_CONFIG.map(tab => {
+            const Icon = tab.icon
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={cn(
+                  'flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 transition-colors',
+                  activeTab === tab.id
+                    ? 'border-primary text-primary'
+                    : 'border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground',
+                )}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                {tab.label}
+              </button>
+            )
+          })}
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard title="Total Revenue" value={analyticsData?.totalRevenue ?? 0} isCurrency icon={DollarSign} />
-        <StatCard title="Total Orders" value={analyticsData?.totalOrders ?? 0} icon={ShoppingCart} />
-        <StatCard title="Avg Order Value" value={analyticsData?.aov ?? 0} isCurrency icon={TrendingUp} />
-        <StatCard
-          title="ROAS"
-          value={roas != null ? `${roas.toFixed(2)}x` : '—'}
-          icon={Percent}
-          description={adSpend ? `RM ${adSpend} ad spend` : 'Enter ad spend above'}
-        />
+      {/* Tab content */}
+      <div className="min-h-[400px]">
+        {activeTab === 'sales' && (
+          <SalesOverviewTab
+            projectId={projectId}
+            dateFrom={dateFrom}
+            dateTo={dateTo}
+            selectedBrand={selectedBrand}
+          />
+        )}
+        {activeTab === 'ads' && (
+          <AdPerformanceTab
+            projectId={projectId}
+            dateFrom={dateFrom}
+            dateTo={dateTo}
+            selectedBrand={selectedBrand}
+            projects={projects}
+          />
+        )}
+        {activeTab === 'customers' && (
+          <CustomerInsightsTab
+            projectId={projectId}
+            dateFrom={dateFrom}
+            dateTo={dateTo}
+          />
+        )}
+        {activeTab === 'goals' && (
+          <GoalTrackingTab
+            projectId={projectId}
+            selectedBrand={selectedBrand}
+            yearMonth={yearMonth}
+          />
+        )}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader><CardTitle className="text-base">Revenue by Day</CardTitle></CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={220}>
-              <AreaChart data={analyticsData?.byDay}>
-                <defs>
-                  <linearGradient id="revGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#2563eb" stopOpacity={0.2} />
-                    <stop offset="95%" stopColor="#2563eb" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                <XAxis dataKey="date" tick={{ fontSize: 10 }} interval={interval} />
-                <YAxis tick={{ fontSize: 10 }} tickFormatter={v => `RM${v}`} />
-                <Tooltip formatter={(v: number) => formatCurrency(v)} />
-                <Area type="monotone" dataKey="revenue" stroke="#2563eb" fill="url(#revGrad)" strokeWidth={2} />
-              </AreaChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader><CardTitle className="text-base">Orders by Day</CardTitle></CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={220}>
-              <LineChart data={analyticsData?.byDay}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                <XAxis dataKey="date" tick={{ fontSize: 10 }} interval={interval} />
-                <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
-                <Tooltip />
-                <Line type="monotone" dataKey="orders" stroke="#10b981" strokeWidth={2} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader><CardTitle className="text-base">Revenue by Project</CardTitle></CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={analyticsData?.byProject}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-                <YAxis tick={{ fontSize: 10 }} tickFormatter={v => `RM${v}`} />
-                <Tooltip formatter={(v: number) => formatCurrency(v)} />
-                <Bar dataKey="revenue" fill="#2563eb" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader><CardTitle className="text-base">Top 10 Customers by LTV</CardTitle></CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={analyticsData?.topCustomers} layout="vertical">
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={v => `RM${v}`} />
-                <YAxis type="category" dataKey="name" tick={{ fontSize: 10 }} width={80} />
-                <Tooltip formatter={(v: number) => formatCurrency(v)} />
-                <Bar dataKey="spend" fill="#8b5cf6" radius={[0, 4, 4, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-      </div>
+      {/* Import modal */}
+      <AdSpendImportModal
+        open={showImport}
+        onClose={() => setShowImport(false)}
+        projects={projects}
+      />
     </div>
   )
 }

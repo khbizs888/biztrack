@@ -26,22 +26,16 @@ interface NavGroup {
 }
 
 const NAV: NavGroup[] = [
-  { label: 'Home',        icon: LayoutDashboard, href: '/dashboard' },
+  { label: 'Home',      icon: LayoutDashboard, href: '/dashboard' },
   {
     label: 'Orders', icon: ShoppingCart,
     children: [
-      { label: 'Daily Order',     href: '/orders' },
-      { label: 'Import History',  href: '/orders/import-history' },
+      { label: 'Daily Order',    href: '/orders' },
+      { label: 'Import History', href: '/orders/import-history' },
     ],
   },
-  {
-    label: 'Reports', icon: BarChart2,
-    children: [
-      { label: 'Customer Data', href: '/customers' },
-      { label: 'Sales Report',  href: '/sales-report' },
-      { label: 'Analytics',     href: '/analytics' },
-    ],
-  },
+  // Analytics is now a single page covering Sales, Ads, Customers, and Goals
+  { label: 'Analytics', icon: BarChart2, href: '/analytics' },
   {
     label: 'Finance', icon: DollarSign,
     children: [
@@ -57,22 +51,9 @@ const NAV: NavGroup[] = [
       { label: 'Suppliers', href: '/suppliers' },
     ],
   },
-  {
-    label: 'Project Management', icon: FolderKanban,
-    children: [
-      { label: 'Products & Packages', href: '/projects' },
-    ],
-  },
-  {
-    label: 'Marketing', icon: TrendingUp,
-    children: [
-      { label: 'Campaigns', href: '/campaigns' },
-    ],
-  },
-  { label: 'KPI',                icon: Target,   href: '/kpi' },
-  { label: 'Account Management', icon: UserCog,  href: '/accounts' },
-  { label: 'Channel Management', icon: Megaphone, href: '/channels' },
-  { label: 'Settings',           icon: Settings, href: '/settings' },
+  { label: 'Projects',   icon: FolderKanban, href: '/projects' },
+  { label: 'Campaigns',  icon: Megaphone,    href: '/campaigns' },
+  { label: 'Settings',   icon: Settings,     href: '/settings' },
 ]
 
 // ---------------------------------------------------------------------------
