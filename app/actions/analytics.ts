@@ -424,13 +424,54 @@ export async function fetchCustomerInsights(
   const monthStart = format(startOfMonth(today), 'yyyy-MM-dd')
   const monthEnd = format(endOfMonth(today), 'yyyy-MM-dd')
 
-  // All customers
-  const { data: customers } = await sb
+  // ── When a brand is selected, customers must be scoped to those who have
+  //    ordered from that project. The customers table has no project_id column,
+  //    so we derive the set from the orders table. ──────────────────────────────
+  //
+  //    We also capture each customer's FIRST order date for THIS brand so that
+  //    "New This Month" means "first order with this brand was this month",
+  //    not "first order ever was this month".
+
+  let brandCustomerIds: string[] | null = null
+  // customerId → earliest order_date for this specific project
+  const brandFirstOrderDate: Record<string, string> = {}
+
+  if (projectId) {
+    const { data: projOrders } = await sb
+      .from('orders')
+      .select('customer_id, order_date')
+      .eq('project_id', projectId)
+      .not('customer_id', 'is', null)
+      .order('order_date', { ascending: true })
+
+    for (const o of projOrders ?? []) {
+      const cid = o.customer_id as string
+      if (!brandFirstOrderDate[cid]) brandFirstOrderDate[cid] = o.order_date
+    }
+    brandCustomerIds = Object.keys(brandFirstOrderDate)
+
+    // No customers have ever ordered from this brand → return empty result
+    if (brandCustomerIds.length === 0) {
+      const emptyDays = eachDayOfInterval({ start: parseISO(dateFrom), end: parseISO(dateTo) })
+      return plain({
+        total: 0, newThisMonth: 0, repeatRate: 0, vipCount: 0, dormantCount: 0,
+        byTag: [],
+        newVsRepeatByDay: emptyDays.map(d => ({ date: format(d, 'dd MMM'), new: 0, repeat: 0 })),
+        top10: [],
+        followUps: [],
+      })
+    }
+  }
+
+  // ── Fetch customers, scoped to the brand's customer list when filtering ──────
+  let custQ = sb
     .from('customers')
     .select('id, name, phone, customer_tag, total_orders, total_spent, first_order_date, follow_up_date, follow_up_note')
     .order('total_spent', { ascending: false })
+  if (brandCustomerIds !== null) custQ = custQ.in('id', brandCustomerIds)
+  const { data: customers } = await custQ
 
-  // Orders in range for new vs repeat trend
+  // ── Orders in date range for new-vs-repeat trend (already project-scoped) ───
   let ordQ = sb
     .from('orders')
     .select('order_date, is_new_customer')
@@ -459,11 +500,14 @@ export async function fetchCustomerInsights(
   const dormantCount = all.filter(c => c.customer_tag === 'Dormant' || c.customer_tag === 'Lost').length
   const repeatCount = all.filter(c => (c.total_orders ?? 0) >= 2).length
 
-  // New this month = first_order_date in this month
-  const newThisMonth = all.filter(c => {
-    const fod = c.first_order_date
-    return fod && fod >= monthStart && fod <= monthEnd
-  }).length
+  // "New this month": when brand-filtered, use the customer's first order date
+  // with THIS brand; otherwise use their global first_order_date.
+  const newThisMonth = projectId
+    ? Object.values(brandFirstOrderDate).filter(d => d >= monthStart && d <= monthEnd).length
+    : all.filter(c => {
+        const fod = c.first_order_date
+        return fod && fod >= monthStart && fod <= monthEnd
+      }).length
 
   // Tag breakdown
   const tagMap: Record<string, number> = {}
@@ -473,7 +517,7 @@ export async function fetchCustomerInsights(
   }
   const byTag = Object.entries(tagMap).map(([tag, count]) => ({ tag, count }))
 
-  // Top 10 customers
+  // Top 10 customers by spend
   const top10 = all
     .sort((a, b) => Number(b.total_spent ?? 0) - Number(a.total_spent ?? 0))
     .slice(0, 10)
