@@ -184,6 +184,7 @@ export default function AnalyticsPage() {
             projectId={projectId}
             dateFrom={dateFrom}
             dateTo={dateTo}
+            selectedBrand={selectedBrand}
           />
         )}
         {activeTab === 'goals' && (

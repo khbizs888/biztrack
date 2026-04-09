@@ -3,20 +3,23 @@
 import { use, useState, useEffect, useTransition } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
-import { setFollowUp, markContacted, updateCustomerNotes, refreshCustomerStats } from '@/app/actions/customer-crm'
+import {
+  setFollowUp, markContacted, updateCustomerNotes, refreshCustomerStats,
+  changeCustomerTag, addCustomerRemark, fetchCustomerRemarks,
+} from '@/app/actions/customer-crm'
 import PageHeader from '@/components/shared/PageHeader'
 import { LoadingSpinner } from '@/components/shared/LoadingState'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { BRAND_COLORS } from '@/lib/constants'
 import {
   MessageCircle, Crown, RefreshCw, Bell, TrendingDown, ShoppingCart,
   DollarSign, TrendingUp, Calendar, UserCheck, Phone, StickyNote,
-  BarChart3,
+  BarChart3, Tag, Send, Clock,
 } from 'lucide-react'
 import { format, differenceInDays } from 'date-fns'
 import { toast } from 'sonner'
@@ -91,10 +94,13 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
   const [notes,   setNotes]   = useState('')
   const [fuReady, setFuReady] = useState(false) // true after customer loads
 
-  const [isSavingFU,   startSavingFU]   = useTransition()
-  const [isContacting, startContacting] = useTransition()
-  const [isSavingNote, startSavingNote] = useTransition()
-  const [isRefreshing, startRefreshing] = useTransition()
+  const [newRemark,    setNewRemark]    = useState('')
+  const [isSavingFU,     startSavingFU]     = useTransition()
+  const [isContacting,   startContacting]   = useTransition()
+  const [isSavingNote,   startSavingNote]   = useTransition()
+  const [isRefreshing,   startRefreshing]   = useTransition()
+  const [isChangingTag,  startChangingTag]  = useTransition()
+  const [isAddingRemark, startAddingRemark] = useTransition()
 
   const { data: customer, isLoading } = useQuery<CustomerCRM | null>({
     queryKey: ['customer-crm', id],
@@ -112,6 +118,11 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
       setFuReady(true)
     }
   }, [customer, fuReady])
+
+  const { data: remarks = [], refetch: refetchRemarks } = useQuery({
+    queryKey: ['customer-remarks', id],
+    queryFn: () => fetchCustomerRemarks(id),
+  })
 
   const { data: orders = [] } = useQuery({
     queryKey: ['customer-orders', id],
@@ -135,9 +146,31 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
     return Object.entries(map).map(([brand, revenue]) => ({ brand, revenue })).sort((a, b) => b.revenue - a.revenue)
   })()
 
+  // Customer insights derived from orders
+  const insights = (() => {
+    const nonCancelled = orders.filter(o => o.status !== 'cancelled')
+    // Purchase frequency: avg days between orders
+    let avgDaysBetween: number | null = null
+    if (nonCancelled.length >= 2) {
+      const dates = [...nonCancelled].map(o => new Date(o.order_date)).sort((a, b) => a.getTime() - b.getTime())
+      const totalDays = (dates[dates.length - 1].getTime() - dates[0].getTime()) / 86_400_000
+      avgDaysBetween = Math.round(totalDays / (dates.length - 1))
+    }
+    // Preferred package
+    const pkgCount: Record<string, number> = {}
+    nonCancelled.forEach(o => {
+      const name = o.package_name ?? (o.package_snapshot as any)?.name
+      if (name) pkgCount[name] = (pkgCount[name] ?? 0) + 1
+    })
+    const preferredPkg = Object.entries(pkgCount).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null
+    return { avgDaysBetween, preferredPkg }
+  })()
+
   function invalidate() {
     queryClient.invalidateQueries({ queryKey: ['customer-crm', id] })
     queryClient.invalidateQueries({ queryKey: ['customers-crm'] })
+    queryClient.invalidateQueries({ queryKey: ['customers-page'] })
+    queryClient.invalidateQueries({ queryKey: ['customer-stats'] })
   }
 
   function handleSaveFU() {
@@ -177,6 +210,28 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
         toast.success('Stats refreshed')
         invalidate()
       } catch { toast.error('Failed to refresh stats') }
+    })
+  }
+
+  function handleChangeTag(tag: string) {
+    startChangingTag(async () => {
+      try {
+        await changeCustomerTag(id, tag as CustomerTag)
+        toast.success(`Tag changed to ${tag}`)
+        invalidate()
+      } catch { toast.error('Failed to change tag') }
+    })
+  }
+
+  function handleAddRemark() {
+    if (!newRemark.trim()) return
+    startAddingRemark(async () => {
+      try {
+        await addCustomerRemark(id, newRemark.trim())
+        toast.success('Remark added')
+        setNewRemark('')
+        refetchRemarks()
+      } catch { toast.error('Failed to add remark') }
     })
   }
 
@@ -251,8 +306,42 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
         ))}
       </div>
 
+      {/* Customer Insights Card */}
+      <Card className="shadow-sm">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm font-medium flex items-center gap-2">
+            <TrendingUp className="h-4 w-4 text-green-500" />
+            Customer Insights
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
+            <div>
+              <p className="text-xs text-muted-foreground mb-0.5">Purchase Frequency</p>
+              <p className="font-semibold">
+                {insights.avgDaysBetween != null ? `Every ${insights.avgDaysBetween} days` : '—'}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-0.5">Preferred Brand</p>
+              <p className="font-semibold">{customer.preferred_brand ?? '—'}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-0.5">Preferred Package</p>
+              <p className="font-semibold text-xs truncate" title={insights.preferredPkg ?? ''}>
+                {insights.preferredPkg ?? '—'}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-0.5">Preferred Platform</p>
+              <p className="font-semibold">{customer.preferred_platform ?? '—'}</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left: Follow-up + Notes */}
+        {/* Left: Follow-up + Notes + Change Tag */}
         <div className="space-y-4">
           {/* Follow-up */}
           <Card className="shadow-sm">
@@ -304,6 +393,44 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
               <Button variant="outline" className="w-full" size="sm" onClick={handleSaveNotes} disabled={isSavingNote}>
                 {isSavingNote ? 'Saving…' : 'Save Notes'}
               </Button>
+            </CardContent>
+          </Card>
+
+          {/* Change Tag */}
+          <Card className="shadow-sm">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Tag className="h-4 w-4 text-purple-500" />
+                Quick Actions
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Override Customer Tag</Label>
+                <Select
+                  value={customer.customer_tag ?? 'New'}
+                  onValueChange={handleChangeTag}
+                  disabled={isChangingTag}
+                >
+                  <SelectTrigger className="h-9">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(['New', 'Repeat', 'VIP', 'Dormant', 'Lost'] as CustomerTag[]).map(t => (
+                      <SelectItem key={t} value={t}>{t}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {isChangingTag && <p className="text-xs text-muted-foreground">Saving…</p>}
+              </div>
+              {waLink && (
+                <a href={waLink} target="_blank" rel="noopener noreferrer" className="block">
+                  <Button variant="outline" size="sm" className="w-full text-green-700 border-green-300 hover:bg-green-50">
+                    <MessageCircle className="h-4 w-4 mr-1.5" />
+                    Open WhatsApp
+                  </Button>
+                </a>
+              )}
             </CardContent>
           </Card>
 
@@ -422,6 +549,54 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
           </Card>
         </div>
       </div>
+
+      {/* Remarks / Notes History */}
+      <Card className="shadow-sm">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <StickyNote className="h-4 w-4 text-indigo-500" />
+            Remarks History
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Add remark */}
+          <div className="flex gap-2">
+            <textarea
+              value={newRemark}
+              onChange={e => setNewRemark(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAddRemark() } }}
+              rows={2}
+              placeholder="Add a remark… (Enter to save)"
+              className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+            <Button
+              size="sm"
+              onClick={handleAddRemark}
+              disabled={isAddingRemark || !newRemark.trim()}
+              className="self-end"
+            >
+              <Send className="h-4 w-4" />
+            </Button>
+          </div>
+
+          {/* Remark list */}
+          {remarks.length === 0 ? (
+            <p className="text-xs text-muted-foreground">No remarks yet.</p>
+          ) : (
+            <div className="space-y-2 max-h-64 overflow-y-auto">
+              {remarks.map(r => (
+                <div key={r.id} className="rounded-lg bg-muted/40 border px-3 py-2">
+                  <p className="text-sm">{r.remark}</p>
+                  <div className="flex items-center gap-1 mt-1 text-xs text-muted-foreground">
+                    <Clock className="h-3 w-3" />
+                    {format(new Date(r.created_at), 'dd MMM yyyy, HH:mm')}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   )
 }

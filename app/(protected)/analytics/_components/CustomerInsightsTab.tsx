@@ -1,46 +1,86 @@
 'use client'
 
+import { useState, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { createClient } from '@/lib/supabase/client'
 import { fetchCustomerInsights } from '@/app/actions/analytics'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { formatCurrency } from '@/lib/utils'
-import { Users, UserPlus, Star, Clock, Repeat2 } from 'lucide-react'
+import { formatCurrency, formatDate } from '@/lib/utils'
+import { Users, UserPlus, Star, Clock, Repeat2, X } from 'lucide-react'
 import {
   PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Legend,
 } from 'recharts'
-import { format } from 'date-fns'
+import { startOfMonth, format, differenceInDays } from 'date-fns'
+import Link from 'next/link'
 
 interface Props {
   projectId: string
   dateFrom: string
   dateTo: string
+  selectedBrand?: string
 }
 
 const TAG_COLORS: Record<string, string> = {
-  New: '#22c55e',
-  Repeat: '#3b82f6',
-  VIP: '#a855f7',
-  Dormant: '#f97316',
-  Lost: '#ef4444',
-  Unknown: '#94a3b8',
+  New: '#22c55e', Repeat: '#3b82f6', VIP: '#a855f7',
+  Dormant: '#f97316', Lost: '#ef4444', Unknown: '#94a3b8',
 }
 
 const TAG_BADGE: Record<string, string> = {
-  New: 'bg-green-100 text-green-700 border-green-200',
-  Repeat: 'bg-blue-100 text-blue-700 border-blue-200',
-  VIP: 'bg-purple-100 text-purple-700 border-purple-200',
+  New:     'bg-green-100 text-green-700 border-green-200',
+  Repeat:  'bg-blue-100 text-blue-700 border-blue-200',
+  VIP:     'bg-purple-100 text-purple-700 border-purple-200',
   Dormant: 'bg-orange-100 text-orange-700 border-orange-200',
-  Lost: 'bg-red-100 text-red-700 border-red-200',
+  Lost:    'bg-red-100 text-red-700 border-red-200',
   Unknown: 'bg-gray-100 text-gray-700 border-gray-200',
 }
 
-export default function CustomerInsightsTab({ projectId, dateFrom, dateTo }: Props) {
-  const { data, isLoading, error } = useQuery({
+type DrillFilter = 'all' | 'new_month' | 'repeat' | 'vip' | 'dormant_lost'
+
+export default function CustomerInsightsTab({ projectId, dateFrom, dateTo, selectedBrand }: Props) {
+  const [drillFilter, setDrillFilter] = useState<DrillFilter>('all')
+  const drillRef = useRef<HTMLDivElement>(null)
+
+  const { data, isLoading } = useQuery({
     queryKey: ['customer-insights', projectId, dateFrom, dateTo],
     queryFn: () => fetchCustomerInsights(projectId, dateFrom, dateTo),
   })
+
+  // Drill-down customers query — fires when a KPI card is clicked
+  const { data: drillCustomers = [], isLoading: drillLoading } = useQuery({
+    queryKey: ['customer-drill', drillFilter, selectedBrand],
+    enabled: drillFilter !== 'all',
+    queryFn: async () => {
+      const sb = createClient()
+      let q = sb.from('customers')
+        .select('id, name, phone, customer_tag, total_spent, total_orders, last_order_date, preferred_brand')
+
+      if (selectedBrand) q = q.eq('preferred_brand', selectedBrand)
+
+      if (drillFilter === 'new_month') {
+        const monthStart = format(startOfMonth(new Date()), 'yyyy-MM-dd')
+        q = q.gte('first_order_date', monthStart)
+      } else if (drillFilter === 'repeat') {
+        q = q.eq('customer_tag', 'Repeat')
+      } else if (drillFilter === 'vip') {
+        q = q.eq('customer_tag', 'VIP')
+      } else if (drillFilter === 'dormant_lost') {
+        q = q.in('customer_tag', ['Dormant', 'Lost'])
+      }
+
+      q = q.order('total_spent', { ascending: false }).limit(50)
+      const { data: rows } = await q
+      return rows ?? []
+    },
+  })
+
+  function handleCardClick(filter: DrillFilter) {
+    const next = drillFilter === filter ? 'all' : filter
+    setDrillFilter(next)
+    if (next !== 'all') {
+      setTimeout(() => drillRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100)
+    }
+  }
 
   if (isLoading) {
     return (
@@ -62,59 +102,42 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo }: Pro
 
   const interval = Math.max(1, Math.floor(data.newVsRepeatByDay.length / 7))
 
+  const DRILL_LABEL: Record<DrillFilter, string> = {
+    all:          'All Customers',
+    new_month:    'New This Month',
+    repeat:       'Repeat Customers',
+    vip:          'VIP Customers',
+    dormant_lost: 'Dormant / Lost',
+  }
+
   return (
     <div className="space-y-6">
-      {/* KPI Cards */}
+      {/* KPI Cards — clickable */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
-            <CardTitle className="text-xs font-medium text-muted-foreground">Total Customers</CardTitle>
-            <Users className="h-3.5 w-3.5 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{data.total.toLocaleString()}</div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
-            <CardTitle className="text-xs font-medium text-muted-foreground">New This Month</CardTitle>
-            <UserPlus className="h-3.5 w-3.5 text-green-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-green-600">{data.newThisMonth}</div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
-            <CardTitle className="text-xs font-medium text-muted-foreground">Repeat Rate</CardTitle>
-            <Repeat2 className="h-3.5 w-3.5 text-blue-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-blue-600">{data.repeatRate.toFixed(1)}%</div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
-            <CardTitle className="text-xs font-medium text-muted-foreground">VIP Customers</CardTitle>
-            <Star className="h-3.5 w-3.5 text-purple-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-purple-600">{data.vipCount}</div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
-            <CardTitle className="text-xs font-medium text-muted-foreground">Dormant / Lost</CardTitle>
-            <Clock className="h-3.5 w-3.5 text-orange-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-orange-600">{data.dormantCount}</div>
-          </CardContent>
-        </Card>
+        {[
+          { filter: 'all' as DrillFilter,          label: 'Total Customers',  value: data.total.toLocaleString(),      color: 'text-foreground',      icon: Users,    accent: '' },
+          { filter: 'new_month' as DrillFilter,    label: 'New This Month',   value: String(data.newThisMonth),        color: 'text-green-600',       icon: UserPlus, accent: 'hover:ring-green-200' },
+          { filter: 'repeat' as DrillFilter,       label: 'Repeat Rate',      value: `${data.repeatRate.toFixed(1)}%`, color: 'text-blue-600',        icon: Repeat2,  accent: 'hover:ring-blue-200' },
+          { filter: 'vip' as DrillFilter,          label: 'VIP Customers',    value: String(data.vipCount),            color: 'text-purple-600',      icon: Star,     accent: 'hover:ring-purple-200' },
+          { filter: 'dormant_lost' as DrillFilter, label: 'Dormant / Lost',   value: String(data.dormantCount),        color: 'text-orange-600',      icon: Clock,    accent: 'hover:ring-orange-200' },
+        ].map(({ filter, label, value, color, icon: Icon, accent }) => (
+          <Card
+            key={filter}
+            onClick={() => handleCardClick(filter)}
+            className={`cursor-pointer transition-all hover:shadow-md hover:scale-[1.02] hover:ring-2 ${accent} ${drillFilter === filter ? 'ring-2 ring-primary shadow-md' : ''}`}
+          >
+            <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
+              <CardTitle className="text-xs font-medium text-muted-foreground">{label}</CardTitle>
+              <Icon className={`h-3.5 w-3.5 ${color}`} />
+            </CardHeader>
+            <CardContent>
+              <div className={`text-2xl font-bold ${color}`}>{value}</div>
+              {drillFilter === filter && (
+                <p className="text-xs text-primary mt-1">Showing below ↓</p>
+              )}
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
       {/* Charts */}
@@ -128,16 +151,8 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo }: Pro
               <div className="flex items-center gap-4">
                 <ResponsiveContainer width="60%" height={180}>
                   <PieChart>
-                    <Pie
-                      data={data.byTag}
-                      dataKey="count"
-                      nameKey="tag"
-                      cx="50%"
-                      cy="50%"
-                      outerRadius={70}
-                      label={({ tag, percent }) => `${tag} ${(percent * 100).toFixed(0)}%`}
-                      labelLine={false}
-                    >
+                    <Pie data={data.byTag} dataKey="count" nameKey="tag" cx="50%" cy="50%" outerRadius={70}
+                      label={({ tag, percent }) => `${tag} ${(percent * 100).toFixed(0)}%`} labelLine={false}>
                       {data.byTag.map(entry => (
                         <Cell key={entry.tag} fill={TAG_COLORS[entry.tag] ?? '#94a3b8'} />
                       ))}
@@ -169,7 +184,7 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo }: Pro
                 <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
                 <Tooltip />
                 <Legend />
-                <Bar dataKey="new" name="New" fill="#22c55e" stackId="a" />
+                <Bar dataKey="new"    name="New"    fill="#22c55e" stackId="a" />
                 <Bar dataKey="repeat" name="Repeat" fill="#3b82f6" stackId="a" />
               </BarChart>
             </ResponsiveContainer>
@@ -177,7 +192,7 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo }: Pro
         </Card>
       </div>
 
-      {/* Top 10 Customers + Follow-ups */}
+      {/* Top 10 + Follow-ups */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
           <CardHeader><CardTitle className="text-sm font-medium">Top 10 Customers by Spend</CardTitle></CardHeader>
@@ -200,13 +215,11 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo }: Pro
                     <tr key={i} className="border-b hover:bg-muted/30">
                       <td className="px-3 py-2 font-mono text-muted-foreground">{i + 1}</td>
                       <td className="px-3 py-2">
-                        <div className="font-medium">{c.name}</div>
+                        <Link href={`/customers/${c.id}`} className="font-medium hover:text-green-600 hover:underline">{c.name}</Link>
                         <div className="text-muted-foreground">{c.phone}</div>
                       </td>
                       <td className="px-3 py-2 text-center">
-                        <span className={`text-xs px-1.5 py-0.5 rounded-full border font-medium ${TAG_BADGE[c.tag] ?? TAG_BADGE.Unknown}`}>
-                          {c.tag}
-                        </span>
+                        <span className={`text-xs px-1.5 py-0.5 rounded-full border font-medium ${TAG_BADGE[c.tag] ?? TAG_BADGE.Unknown}`}>{c.tag}</span>
                       </td>
                       <td className="px-3 py-2 text-right">{c.total_orders}</td>
                       <td className="px-3 py-2 text-right font-medium">{formatCurrency(c.total_spent)}</td>
@@ -231,11 +244,9 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo }: Pro
                   <div key={f.id} className="rounded-lg border p-3">
                     <div className="flex items-start justify-between gap-2">
                       <div>
-                        <p className="text-sm font-medium">{f.name}</p>
+                        <Link href={`/customers/${f.id}`} className="text-sm font-medium hover:text-green-600 hover:underline">{f.name}</Link>
                         <p className="text-xs text-muted-foreground">{f.phone}</p>
-                        {f.follow_up_note && (
-                          <p className="text-xs text-muted-foreground mt-1 italic">"{f.follow_up_note}"</p>
-                        )}
+                        {f.follow_up_note && <p className="text-xs text-muted-foreground mt-1 italic">"{f.follow_up_note}"</p>}
                       </div>
                       <span className="text-xs text-amber-600 font-medium shrink-0">{f.follow_up_date}</span>
                     </div>
@@ -246,6 +257,77 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo }: Pro
           </CardContent>
         </Card>
       </div>
+
+      {/* Drill-down customer table */}
+      {drillFilter !== 'all' && (
+        <div ref={drillRef}>
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm font-medium">
+                  Showing: {DRILL_LABEL[drillFilter]}
+                  {!drillLoading && (
+                    <span className="ml-2 text-xs font-normal text-muted-foreground">({drillCustomers.length} customers)</span>
+                  )}
+                </CardTitle>
+                <button onClick={() => setDrillFilter('all')} className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+                  <X className="h-3.5 w-3.5" /> Clear filter
+                </button>
+              </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              {drillLoading ? (
+                <div className="h-24 bg-muted/20 animate-pulse mx-4 mb-4 rounded" />
+              ) : drillCustomers.length === 0 ? (
+                <p className="text-sm text-muted-foreground p-6 text-center">No customers found</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b bg-muted/50">
+                        <th className="px-3 py-2 text-left font-medium text-muted-foreground">Name</th>
+                        <th className="px-3 py-2 text-left font-medium text-muted-foreground">Phone</th>
+                        <th className="px-3 py-2 text-center font-medium text-muted-foreground">Tag</th>
+                        <th className="px-3 py-2 text-right font-medium text-muted-foreground">Orders</th>
+                        <th className="px-3 py-2 text-right font-medium text-muted-foreground">Spent</th>
+                        <th className="px-3 py-2 text-left font-medium text-muted-foreground">Last Order</th>
+                        <th className="px-3 py-2 text-center font-medium text-muted-foreground">Days Ago</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {drillCustomers.map((c: {
+                        id: string; name: string; phone: string; customer_tag: string;
+                        total_spent: number; total_orders: number; last_order_date: string | null;
+                        preferred_brand: string | null
+                      }) => {
+                        const days = c.last_order_date
+                          ? differenceInDays(new Date(), new Date(c.last_order_date + 'T12:00:00'))
+                          : null
+                        const daysColor = days == null ? '' : days > 90 ? 'text-red-600 font-bold' : days > 60 ? 'text-orange-600 font-medium' : days > 30 ? 'text-yellow-600' : 'text-green-600'
+                        return (
+                          <tr key={c.id} className="border-b hover:bg-muted/30">
+                            <td className="px-3 py-2">
+                              <Link href={`/customers/${c.id}`} className="font-medium hover:text-green-600 hover:underline">{c.name}</Link>
+                            </td>
+                            <td className="px-3 py-2 text-muted-foreground font-mono">{c.phone}</td>
+                            <td className="px-3 py-2 text-center">
+                              <span className={`px-1.5 py-0.5 rounded-full border font-medium ${TAG_BADGE[c.customer_tag] ?? TAG_BADGE.Unknown}`}>{c.customer_tag}</span>
+                            </td>
+                            <td className="px-3 py-2 text-right font-semibold">{c.total_orders}</td>
+                            <td className="px-3 py-2 text-right">{formatCurrency(c.total_spent)}</td>
+                            <td className="px-3 py-2 text-muted-foreground">{c.last_order_date ? formatDate(c.last_order_date) : '—'}</td>
+                            <td className={`px-3 py-2 text-center ${daysColor}`}>{days ?? '—'}</td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
   )
 }

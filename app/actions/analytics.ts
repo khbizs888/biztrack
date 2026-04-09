@@ -112,7 +112,7 @@ export interface CustomerInsightsData {
   dormantCount: number
   byTag: { tag: string; count: number }[]
   newVsRepeatByDay: { date: string; new: number; repeat: number }[]
-  top10: { name: string; phone: string; total_orders: number; total_spent: number; tag: string }[]
+  top10: { id: string; name: string; phone: string; total_orders: number; total_spent: number; tag: string }[]
   followUps: { id: string; name: string; phone: string; follow_up_date: string; follow_up_note: string | null }[]
 }
 
@@ -541,6 +541,7 @@ export async function fetchCustomerInsights(
     .sort((a, b) => Number(b.total_spent ?? 0) - Number(a.total_spent ?? 0))
     .slice(0, 10)
     .map(c => ({
+      id: c.id,
       name: c.name,
       phone: c.phone,
       total_orders: c.total_orders ?? 0,
