@@ -25,14 +25,40 @@ function parseMoney(raw: string): number {
   return isNaN(v) ? 0 : v
 }
 
-// Normalise date: supports DD/MM/YYYY, YYYY-MM-DD, D/M/YYYY
+// Validate that a YYYY-MM-DD string is a real calendar date
+function isValidDate(iso: string): boolean {
+  const d = new Date(iso)
+  return !isNaN(d.getTime()) && d.toISOString().startsWith(iso)
+}
+
+// Normalise date to YYYY-MM-DD. Handles:
+//   YYYY-MM-DD  (e.g. 2026-02-03)
+//   YYYY/MM/DD  (e.g. 2026/02/03  ← FIOR Race Report format)
+//   DD/MM/YYYY  (e.g. 03/02/2026)
+//   D/M/YYYY    (e.g. 3/2/2026)
 function parseDate(raw: string): string | null {
   const s = String(raw ?? '').trim()
-  // YYYY-MM-DD
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s
-  // D/M/YYYY or DD/MM/YYYY
-  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
-  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`
+  if (!s) return null
+
+  // YYYY-MM-DD (already ISO)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    return isValidDate(s) ? s : null
+  }
+
+  // YYYY/MM/DD → replace slashes with dashes
+  const ymd = s.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/)
+  if (ymd) {
+    const iso = `${ymd[1]}-${ymd[2].padStart(2, '0')}-${ymd[3].padStart(2, '0')}`
+    return isValidDate(iso) ? iso : null
+  }
+
+  // DD/MM/YYYY or D/M/YYYY
+  const dmy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+  if (dmy) {
+    const iso = `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`
+    return isValidDate(iso) ? iso : null
+  }
+
   return null
 }
 
@@ -112,6 +138,10 @@ export default function AdSpendImportModal({ open, onClose, projects, onSuccess 
 
       rows.push(row)
     }
+
+    // Debug: log first 3 parsed rows to confirm date parsing
+    console.log('[AdSpendImport] parsed', rows.length, 'rows,', errors.length, 'errors')
+    console.log('[AdSpendImport] first 3 rows:', rows.slice(0, 3).map(r => ({ date: r.date, fb1: r.fb_ad_cost_acc1, tiktok: r.tiktok_ad_cost, shopee: r.shopee_ad_cost })))
 
     setParseErrors(errors)
     setPreview(rows)
