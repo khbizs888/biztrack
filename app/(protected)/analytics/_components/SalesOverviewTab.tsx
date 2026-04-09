@@ -10,6 +10,7 @@ import {
   Tooltip, ResponsiveContainer, Legend, Cell,
 } from 'recharts'
 import { BRAND_COLORS } from '@/lib/constants'
+import SalesOrdersTable from './SalesOrdersTable'
 
 interface Props {
   projectId: string
@@ -254,6 +255,9 @@ export default function SalesOverviewTab({ projectId, dateFrom, dateTo, selected
           </CardContent>
         </Card>
       </div>
+
+      {/* Orders table with payment confirmation */}
+      <SalesOrdersTable projectId={projectId} dateFrom={dateFrom} dateTo={dateTo} />
     </div>
   )
 }

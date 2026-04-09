@@ -585,3 +585,56 @@ export async function fetchGoalTracking(
 
   return plain({ totalGoal, accumulated, daysInMonth: daysInMon, currentDay: todayDay, byDay, byBrand })
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Orders for payment confirmation table
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface OrderForPayment {
+  id: string
+  order_date: string
+  customer_name: string | null
+  package_name: string | null
+  total_price: number
+  channel: string | null
+  payment_status: string | null
+  is_cod: boolean | null
+  delivery_status: string | null
+  tracking_number: string | null
+  project_code: string | null
+}
+
+export async function fetchOrdersForPayment(
+  projectId: string,
+  dateFrom: string,
+  dateTo: string,
+): Promise<OrderForPayment[]> {
+  const sb = createAdminClient()
+  let q = sb
+    .from('orders')
+    .select('id, order_date, total_price, channel, payment_status, is_cod, delivery_status, tracking_number, package_name, customers(name), projects(code)')
+    .gte('order_date', dateFrom)
+    .lte('order_date', dateTo)
+    .neq('status', 'cancelled')
+    .order('order_date', { ascending: false })
+    .order('created_at', { ascending: false })
+    .limit(200)
+  if (projectId) q = q.eq('project_id', projectId)
+  const { data, error } = await q
+  if (error) throw new Error(error.message)
+  return plain(
+    (data ?? []).map(o => ({
+      id: o.id,
+      order_date: o.order_date,
+      customer_name: (o.customers as unknown as { name: string } | null)?.name ?? null,
+      package_name: o.package_name,
+      total_price: Number(o.total_price),
+      channel: o.channel,
+      payment_status: o.payment_status,
+      is_cod: o.is_cod,
+      delivery_status: o.delivery_status,
+      tracking_number: o.tracking_number,
+      project_code: (o.projects as unknown as { code: string } | null)?.code ?? null,
+    })),
+  )
+}
