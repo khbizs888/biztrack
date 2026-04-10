@@ -136,14 +136,20 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
     },
   })
 
-  // Brand revenue breakdown from orders
+  // Brand revenue breakdown from orders (with count and last order)
   const brandData = (() => {
-    const map: Record<string, number> = {}
+    const map: Record<string, { revenue: number; orders: number; lastOrderDate: string | null }> = {}
     orders.filter(o => o.status !== 'cancelled').forEach(o => {
       const brand = (o.projects as any)?.code ?? 'Other'
-      map[brand] = (map[brand] ?? 0) + Number(o.total_price ?? 0)
+      if (!map[brand]) map[brand] = { revenue: 0, orders: 0, lastOrderDate: null }
+      map[brand].revenue += Number(o.total_price ?? 0)
+      map[brand].orders++
+      const d = o.order_date as string
+      if (!map[brand].lastOrderDate || d > map[brand].lastOrderDate!) map[brand].lastOrderDate = d
     })
-    return Object.entries(map).map(([brand, revenue]) => ({ brand, revenue })).sort((a, b) => b.revenue - a.revenue)
+    return Object.entries(map)
+      .map(([brand, v]) => ({ brand, ...v }))
+      .sort((a, b) => b.revenue - a.revenue)
   })()
 
   // Customer insights derived from orders
@@ -549,6 +555,61 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
           </Card>
         </div>
       </div>
+
+      {/* Brand Breakdown Table */}
+      {brandData.length > 1 && (
+        <Card className="shadow-sm">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <BarChart3 className="h-4 w-4 text-indigo-500" />
+              Brand Spend Breakdown
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-muted/50">
+                    <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">Brand</th>
+                    <th className="px-4 py-2.5 text-right font-medium text-muted-foreground">Orders</th>
+                    <th className="px-4 py-2.5 text-right font-medium text-muted-foreground">Total Spent</th>
+                    <th className="px-4 py-2.5 text-right font-medium text-muted-foreground">% of Total</th>
+                    <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">Last Order</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {brandData.map((d, i) => {
+                    const totalSpent = brandData.reduce((s, x) => s + x.revenue, 0)
+                    const pct = totalSpent > 0 ? (d.revenue / totalSpent * 100).toFixed(1) : '0'
+                    const isPrimary = i === 0
+                    const c = BRAND_COLORS[d.brand]
+                    return (
+                      <tr key={d.brand} className={`border-b hover:bg-muted/30 ${isPrimary ? 'font-semibold' : ''}`}>
+                        <td className="px-4 py-2.5">
+                          <div className="flex items-center gap-2">
+                            <span className={`px-2 py-0.5 rounded-full border text-xs font-medium ${c ? `${c.bg} ${c.text} ${c.border}` : 'bg-gray-100 text-gray-700 border-gray-200'}`}>
+                              {d.brand}
+                            </span>
+                            {isPrimary && (
+                              <span className="text-yellow-500 text-xs" title="Primary brand">★</span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-4 py-2.5 text-right">{d.orders}</td>
+                        <td className="px-4 py-2.5 text-right">{formatCurrency(d.revenue)}</td>
+                        <td className="px-4 py-2.5 text-right text-muted-foreground">{pct}%</td>
+                        <td className="px-4 py-2.5 text-muted-foreground text-xs">
+                          {d.lastOrderDate ? formatDate(d.lastOrderDate) : '—'}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Remarks / Notes History */}
       <Card className="shadow-sm">

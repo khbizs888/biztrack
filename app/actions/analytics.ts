@@ -3,7 +3,7 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import {
   eachDayOfInterval, parseISO, format, startOfMonth, endOfMonth,
-  differenceInDays, getDaysInMonth, getDate, subDays,
+  differenceInDays, getDaysInMonth, getDate, subDays, subMonths,
 } from 'date-fns'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -114,6 +114,11 @@ export interface CustomerInsightsData {
   newVsRepeatByDay: { date: string; new: number; repeat: number }[]
   top10: { id: string; name: string; phone: string; total_orders: number; total_spent: number; tag: string }[]
   followUps: { id: string; name: string; phone: string; follow_up_date: string; follow_up_note: string | null }[]
+  newCustomerAov: number
+  repeatCustomerAov: number
+  customerLtv: number
+  retentionRate: number
+  monthlyTrend: { month: string; newAov: number; repeatAov: number; retentionRate: number }[]
 }
 
 export interface GoalTrackingData {
@@ -478,6 +483,11 @@ export async function fetchCustomerInsights(
         newVsRepeatByDay: emptyDays.map(d => ({ date: format(d, 'dd MMM'), new: 0, repeat: 0 })),
         top10: [],
         followUps: [],
+        newCustomerAov: 0,
+        repeatCustomerAov: 0,
+        customerLtv: 0,
+        retentionRate: 0,
+        monthlyTrend: [],
       })
     }
   }
@@ -562,6 +572,62 @@ export async function fetchCustomerInsights(
     }))
     .slice(0, 20)
 
+  // ── New Customer AOV: avg total_spent for single-order customers ─────────────
+  const singleOrderCustomers = all.filter(c => (c.total_orders ?? 0) === 1)
+  const newCustomerAov = singleOrderCustomers.length > 0
+    ? singleOrderCustomers.reduce((s, c) => s + Number(c.total_spent ?? 0), 0) / singleOrderCustomers.length
+    : 0
+
+  // ── Repeat Customer AOV: avg (total_spent / total_orders) for 2+ orders ──────
+  const repeatCustomers = all.filter(c => (c.total_orders ?? 0) >= 2)
+  const repeatCustomerAov = repeatCustomers.length > 0
+    ? repeatCustomers.reduce((s, c) => s + safeDivide(Number(c.total_spent ?? 0), c.total_orders ?? 1), 0) / repeatCustomers.length
+    : 0
+
+  // ── Customer LTV: average total_spent across all customers ───────────────────
+  const customerLtv = total > 0
+    ? all.reduce((s, c) => s + Number(c.total_spent ?? 0), 0) / total
+    : 0
+
+  // ── Retention Rate: customers with 2+ orders / total ─────────────────────────
+  const retentionRate = safeDivide(repeatCount, total) * 100
+
+  // ── Monthly trend: last 6 months using is_new_customer on orders ─────────────
+  const sixMonthsAgo = format(subMonths(today, 6), 'yyyy-MM-dd')
+  let trendQ = sb
+    .from('orders')
+    .select('order_date, total_price, is_new_customer')
+    .gte('order_date', sixMonthsAgo)
+    .neq('status', 'cancelled')
+  if (projectId) trendQ = trendQ.eq('project_id', projectId)
+  const { data: trendOrders } = await trendQ
+
+  const monthMap: Record<string, { newOrders: number; newRevenue: number; repeatOrders: number; repeatRevenue: number; totalOrders: number }> = {}
+  for (const o of trendOrders ?? []) {
+    const month = (o.order_date as string).substring(0, 7)
+    if (!monthMap[month]) monthMap[month] = { newOrders: 0, newRevenue: 0, repeatOrders: 0, repeatRevenue: 0, totalOrders: 0 }
+    if (o.is_new_customer) {
+      monthMap[month].newOrders++
+      monthMap[month].newRevenue += Number(o.total_price ?? 0)
+    } else {
+      monthMap[month].repeatOrders++
+      monthMap[month].repeatRevenue += Number(o.total_price ?? 0)
+    }
+    monthMap[month].totalOrders++
+  }
+
+  const monthlyTrend = Array.from({ length: 6 }, (_, i) => {
+    const d = subMonths(today, 5 - i)
+    const key = format(d, 'yyyy-MM')
+    const m = monthMap[key] ?? { newOrders: 0, newRevenue: 0, repeatOrders: 0, repeatRevenue: 0, totalOrders: 0 }
+    return {
+      month: format(d, 'MMM yy'),
+      newAov: m.newOrders > 0 ? m.newRevenue / m.newOrders : 0,
+      repeatAov: m.repeatOrders > 0 ? m.repeatRevenue / m.repeatOrders : 0,
+      retentionRate: m.totalOrders > 0 ? (m.repeatOrders / m.totalOrders) * 100 : 0,
+    }
+  })
+
   return plain({
     total,
     newThisMonth,
@@ -572,6 +638,11 @@ export async function fetchCustomerInsights(
     newVsRepeatByDay,
     top10,
     followUps,
+    newCustomerAov,
+    repeatCustomerAov,
+    customerLtv,
+    retentionRate,
+    monthlyTrend,
   })
 }
 
@@ -797,4 +868,54 @@ export async function fetchOrdersForPayment(
       project_code: (o.projects as unknown as { code: string } | null)?.code ?? null,
     })),
   )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sales by State
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface SalesByStateRow {
+  state: string
+  orders: number
+  revenue: number
+  avgOrderValue: number
+  pct: number
+}
+
+export async function fetchSalesByState(
+  projectId: string,
+  dateFrom: string,
+  dateTo: string,
+): Promise<SalesByStateRow[]> {
+  const sb = createAdminClient()
+  let q = sb
+    .from('orders')
+    .select('state, total_price')
+    .gte('order_date', dateFrom)
+    .lte('order_date', dateTo)
+    .neq('status', 'cancelled')
+    .not('state', 'is', null)
+  if (projectId) q = q.eq('project_id', projectId)
+  const { data } = await q
+
+  const stateMap: Record<string, { orders: number; revenue: number }> = {}
+  for (const o of data ?? []) {
+    const s = (o.state as string | null) || 'Unknown'
+    if (!stateMap[s]) stateMap[s] = { orders: 0, revenue: 0 }
+    stateMap[s].orders++
+    stateMap[s].revenue += Number(o.total_price ?? 0)
+  }
+
+  const total = Object.values(stateMap).reduce((s, v) => s + v.revenue, 0)
+  const rows = Object.entries(stateMap)
+    .map(([state, v]) => ({
+      state,
+      orders: v.orders,
+      revenue: v.revenue,
+      avgOrderValue: v.orders > 0 ? v.revenue / v.orders : 0,
+      pct: total > 0 ? (v.revenue / total) * 100 : 0,
+    }))
+    .sort((a, b) => b.revenue - a.revenue)
+
+  return plain(rows)
 }

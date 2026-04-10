@@ -26,6 +26,8 @@ export const orderSchema = z.object({
   status: z.enum(['pending', 'processing', 'shipped', 'delivered', 'cancelled']).default('pending'),
   order_date: z.string().min(1, 'Order date is required'),
   tracking_number: z.string().optional().nullable(),
+  state: z.string().optional(),
+  address: z.string().optional(),
 })
 
 export const productSchema = z.object({

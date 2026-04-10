@@ -1,7 +1,7 @@
 'use client'
 
 import { useQuery } from '@tanstack/react-query'
-import { fetchSalesOverview } from '@/app/actions/analytics'
+import { fetchSalesOverview, fetchSalesByState } from '@/app/actions/analytics'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { formatCurrency } from '@/lib/utils'
 import { TrendingUp, TrendingDown, DollarSign, ShoppingCart, BarChart3, Minus } from 'lucide-react'
@@ -44,6 +44,11 @@ export default function SalesOverviewTab({ projectId, dateFrom, dateTo, selected
   const { data, isLoading, error } = useQuery({
     queryKey: ['sales-overview', projectId, dateFrom, dateTo],
     queryFn: () => fetchSalesOverview(projectId, dateFrom, dateTo),
+  })
+
+  const { data: stateData = [] } = useQuery({
+    queryKey: ['sales-by-state', projectId, dateFrom, dateTo],
+    queryFn: () => fetchSalesByState(projectId, dateFrom, dateTo),
   })
 
   if (isLoading) {
@@ -255,6 +260,56 @@ export default function SalesOverviewTab({ projectId, dateFrom, dateTo, selected
           </CardContent>
         </Card>
       </div>
+
+      {/* Sales by State */}
+      {stateData.length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <Card>
+            <CardHeader><CardTitle className="text-sm font-medium">Revenue by State (Top 10)</CardTitle></CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={260}>
+                <BarChart data={stateData.slice(0, 10)} layout="vertical" margin={{ top: 0, right: 16, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={v => `RM${(v / 1000).toFixed(0)}k`} />
+                  <YAxis type="category" dataKey="state" tick={{ fontSize: 10 }} width={80} />
+                  <Tooltip formatter={(v: number) => formatCurrency(v)} />
+                  <Bar dataKey="revenue" fill="#3b82f6" radius={[0, 4, 4, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader><CardTitle className="text-sm font-medium">State Breakdown</CardTitle></CardHeader>
+            <CardContent className="p-0">
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b bg-muted/50">
+                      <th className="px-3 py-2 text-left font-medium text-muted-foreground">State</th>
+                      <th className="px-3 py-2 text-right font-medium text-muted-foreground">Orders</th>
+                      <th className="px-3 py-2 text-right font-medium text-muted-foreground">Revenue</th>
+                      <th className="px-3 py-2 text-right font-medium text-muted-foreground">AOV</th>
+                      <th className="px-3 py-2 text-right font-medium text-muted-foreground">%</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {stateData.map((row, i) => (
+                      <tr key={row.state} className={`border-b hover:bg-muted/30 ${i === 0 ? 'font-semibold' : ''}`}>
+                        <td className="px-3 py-2">{row.state}</td>
+                        <td className="px-3 py-2 text-right">{row.orders}</td>
+                        <td className="px-3 py-2 text-right">{formatCurrency(row.revenue)}</td>
+                        <td className="px-3 py-2 text-right">{formatCurrency(row.avgOrderValue)}</td>
+                        <td className="px-3 py-2 text-right text-muted-foreground">{row.pct.toFixed(1)}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {/* Orders table with payment confirmation */}
       <SalesOrdersTable projectId={projectId} dateFrom={dateFrom} dateTo={dateTo} />

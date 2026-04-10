@@ -473,6 +473,8 @@ export async function createOrder(payload: {
   purchase_reason: string
   is_new_customer: boolean
   tracking_number?: string | null
+  state?: string | null
+  address?: string | null
 }) {
   const sb = createAdminClient()
   const { data: inserted, error } = await sb

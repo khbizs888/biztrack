@@ -9,7 +9,7 @@ import { formatCurrency, formatDate } from '@/lib/utils'
 import { Users, UserPlus, Star, Clock, Repeat2, X } from 'lucide-react'
 import {
   PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, Legend,
+  Tooltip, ResponsiveContainer, Legend, LineChart, Line,
 } from 'recharts'
 import { startOfMonth, format, differenceInDays } from 'date-fns'
 import Link from 'next/link'
@@ -139,6 +139,71 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo, selec
           </Card>
         ))}
       </div>
+
+      {/* AOV / LTV / Retention KPI Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
+            <CardTitle className="text-xs font-medium text-muted-foreground">New Customer AOV</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-xl font-bold text-green-600">{formatCurrency(data.newCustomerAov)}</div>
+            <p className="text-xs text-muted-foreground mt-0.5">Avg first order value</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
+            <CardTitle className="text-xs font-medium text-muted-foreground">Repeat Customer AOV</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-xl font-bold text-blue-600">{formatCurrency(data.repeatCustomerAov)}</div>
+            <p className="text-xs text-muted-foreground mt-0.5">Avg per order (2+ orders)</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
+            <CardTitle className="text-xs font-medium text-muted-foreground">Customer LTV</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-xl font-bold text-purple-600">{formatCurrency(data.customerLtv)}</div>
+            <p className="text-xs text-muted-foreground mt-0.5">Avg lifetime value</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
+            <CardTitle className="text-xs font-medium text-muted-foreground">Retention Rate</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-xl font-bold text-orange-600">{data.retentionRate.toFixed(1)}%</div>
+            <p className="text-xs text-muted-foreground mt-0.5">Customers with 2+ orders</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Monthly AOV & Retention Trend */}
+      {data.monthlyTrend.length > 0 && (
+        <Card>
+          <CardHeader><CardTitle className="text-sm font-medium">Monthly AOV & Retention Trend (Last 6 Months)</CardTitle></CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={220}>
+              <LineChart data={data.monthlyTrend}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="month" tick={{ fontSize: 10 }} />
+                <YAxis yAxisId="left" tick={{ fontSize: 10 }} tickFormatter={v => `RM${v}`} />
+                <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} tickFormatter={v => `${v.toFixed(0)}%`} />
+                <Tooltip formatter={(v: number, name: string) => {
+                  if (name === 'Retention %') return [`${v.toFixed(1)}%`, name]
+                  return [formatCurrency(v), name]
+                }} />
+                <Legend />
+                <Line yAxisId="left" type="monotone" dataKey="newAov" name="New AOV" stroke="#22c55e" strokeWidth={2} dot={false} />
+                <Line yAxisId="left" type="monotone" dataKey="repeatAov" name="Repeat AOV" stroke="#3b82f6" strokeWidth={2} dot={false} />
+                <Line yAxisId="right" type="monotone" dataKey="retentionRate" name="Retention %" stroke="#f97316" strokeWidth={2} dot={false} strokeDasharray="4 2" />
+              </LineChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

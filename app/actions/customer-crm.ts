@@ -201,9 +201,11 @@ function computeTag(
   totalOrders: number,
   totalSpent: number,
   lastOrderDate: string | null,
+  vipSpendThreshold = 2000,
+  vipOrderThreshold = 6,
 ): CustomerTag {
   if (!lastOrderDate || totalOrders === 0) return 'New'
-  if (totalOrders >= 6 || totalSpent > 2000) return 'VIP'
+  if (totalOrders >= vipOrderThreshold || totalSpent > vipSpendThreshold) return 'VIP'
   const daysSince = Math.floor(
     (Date.now() - new Date(lastOrderDate + 'T12:00:00').getTime()) / 86_400_000
   )
@@ -264,7 +266,31 @@ export async function refreshCustomerStats(customerId: string): Promise<void> {
   })
   const preferredPlatform = Object.entries(platCount).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null
 
-  const customerTag = computeTag(totalOrders, totalSpent, lastOrderDate)
+  // Determine preferred project for VIP threshold lookup
+  const preferredProjectId = Object.entries(
+    orders.reduce((acc: Record<string, number>, o) => {
+      const pid = o.project_id as string
+      if (pid) acc[pid] = (acc[pid] ?? 0) + 1
+      return acc
+    }, {}),
+  ).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null
+
+  // Fetch brand settings for VIP thresholds
+  let vipSpendThreshold = 2000
+  let vipOrderThreshold = 6
+  if (preferredProjectId) {
+    const { data: bSettings } = await sb
+      .from('brand_settings')
+      .select('vip_spend_threshold, vip_order_threshold')
+      .eq('project_id', preferredProjectId)
+      .single()
+    if (bSettings) {
+      vipSpendThreshold = Number(bSettings.vip_spend_threshold ?? 2000)
+      vipOrderThreshold = Number(bSettings.vip_order_threshold ?? 6)
+    }
+  }
+
+  const customerTag = computeTag(totalOrders, totalSpent, lastOrderDate, vipSpendThreshold, vipOrderThreshold)
 
   await sb
     .from('customers')

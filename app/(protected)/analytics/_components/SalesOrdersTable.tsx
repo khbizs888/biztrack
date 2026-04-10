@@ -226,7 +226,11 @@ export default function SalesOrdersTable({ projectId, dateFrom, dateTo }: Props)
                       key={order.id}
                       className={cn(
                         'border-b transition-colors',
-                        isChecked ? 'bg-green-50/60' : 'hover:bg-muted/30',
+                        isChecked
+                          ? 'bg-green-50/60'
+                          : order.is_cod
+                            ? 'bg-amber-50/60 hover:bg-amber-50'
+                            : 'hover:bg-muted/30',
                         order.payment_status === 'Settled' && 'opacity-60',
                       )}
                     >
