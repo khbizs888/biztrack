@@ -12,6 +12,9 @@ export type CustomerSearchResult = {
   phone: string
   tag: string
   totalSpent: number
+  totalOrders: number
+  lastOrderDate: string | null
+  preferredBrand: string | null
 }
 
 export type OrderSearchResult = {
@@ -20,6 +23,11 @@ export type OrderSearchResult = {
   trackingNumber: string
   customerId: string
   customerName: string
+  projectCode: string | null
+  packageName: string | null
+  totalPrice: number
+  orderDate: string
+  status: string
 }
 
 export type SearchResult = CustomerSearchResult | OrderSearchResult
@@ -32,12 +40,12 @@ export async function globalSearch(query: string): Promise<SearchResult[]> {
 
   const [{ data: customers }, { data: orders }] = await Promise.all([
     sb.from('customers')
-      .select('id, name, phone, customer_tag, total_spent')
+      .select('id, name, phone, customer_tag, total_spent, total_orders, last_order_date, preferred_brand')
       .or(`name.ilike.${q},phone.ilike.${q}`)
       .order('total_spent', { ascending: false })
       .limit(8),
     sb.from('orders')
-      .select('id, tracking_number, customer_id, customers(name)')
+      .select('id, tracking_number, customer_id, order_date, total_price, status, package_name, customers(name), projects(code)')
       .ilike('tracking_number', q)
       .not('tracking_number', 'is', null)
       .limit(4),
@@ -53,11 +61,15 @@ export async function globalSearch(query: string): Promise<SearchResult[]> {
       phone: c.phone ?? '',
       tag: (c.customer_tag as string) ?? 'New',
       totalSpent: Number(c.total_spent ?? 0),
+      totalOrders: c.total_orders ?? 0,
+      lastOrderDate: c.last_order_date ?? null,
+      preferredBrand: c.preferred_brand ?? null,
     })
   }
 
   for (const o of orders ?? []) {
     const cust = o.customers as unknown as { name: string } | null
+    const proj = o.projects as unknown as { code: string } | null
     if (!o.customer_id) continue
     results.push({
       type: 'order',
@@ -65,6 +77,11 @@ export async function globalSearch(query: string): Promise<SearchResult[]> {
       trackingNumber: o.tracking_number ?? '',
       customerId: o.customer_id,
       customerName: cust?.name ?? '',
+      projectCode: proj?.code ?? null,
+      packageName: o.package_name ?? null,
+      totalPrice: Number(o.total_price ?? 0),
+      orderDate: o.order_date ?? '',
+      status: o.status ?? 'pending',
     })
   }
 

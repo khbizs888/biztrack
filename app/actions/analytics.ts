@@ -118,6 +118,7 @@ export interface CustomerInsightsData {
   repeatCustomerAov: number
   customerLtv: number
   retentionRate: number
+  retentionDays: number
   monthlyTrend: { month: string; newAov: number; repeatAov: number; retentionRate: number }[]
 }
 
@@ -456,6 +457,17 @@ export async function fetchCustomerInsights(
   //    "New This Month" means "first order with this brand was this month",
   //    not "first order ever was this month".
 
+  // ── Fetch retention_days from brand_settings ─────────────────────────────────
+  let retentionDays = 365
+  if (projectId) {
+    const { data: bSettings } = await sb
+      .from('brand_settings')
+      .select('retention_days')
+      .eq('project_id', projectId)
+      .single()
+    if (bSettings) retentionDays = Number(bSettings.retention_days ?? 365)
+  }
+
   let brandCustomerIds: string[] | null = null
   // customerId → earliest order_date for this specific project
   const brandFirstOrderDate: Record<string, string> = {}
@@ -487,15 +499,15 @@ export async function fetchCustomerInsights(
         repeatCustomerAov: 0,
         customerLtv: 0,
         retentionRate: 0,
+        retentionDays,
         monthlyTrend: [],
       })
     }
   }
 
-  // ── Fetch customers, scoped to the brand's customer list when filtering ──────
   let custQ = sb
     .from('customers')
-    .select('id, name, phone, customer_tag, total_orders, total_spent, first_order_date, follow_up_date, follow_up_note')
+    .select('id, name, phone, customer_tag, total_orders, total_spent, first_order_date, last_order_date, follow_up_date, follow_up_note')
     .order('total_spent', { ascending: false })
   if (brandCustomerIds !== null) custQ = custQ.in('id', brandCustomerIds)
   const { data: customers } = await custQ
@@ -589,8 +601,14 @@ export async function fetchCustomerInsights(
     ? all.reduce((s, c) => s + Number(c.total_spent ?? 0), 0) / total
     : 0
 
-  // ── Retention Rate: customers with 2+ orders / total ─────────────────────────
-  const retentionRate = safeDivide(repeatCount, total) * 100
+  // ── Retention Rate: customers with 2+ orders AND last order within retentionDays
+  const retentionCutoff = format(subDays(today, retentionDays), 'yyyy-MM-dd')
+  const retainedCount = all.filter(c =>
+    (c.total_orders ?? 0) >= 2 &&
+    c.last_order_date != null &&
+    c.last_order_date >= retentionCutoff
+  ).length
+  const retentionRate = safeDivide(retainedCount, total) * 100
 
   // ── Monthly trend: last 6 months using is_new_customer on orders ─────────────
   const sixMonthsAgo = format(subMonths(today, 6), 'yyyy-MM-dd')
@@ -642,6 +660,7 @@ export async function fetchCustomerInsights(
     repeatCustomerAov,
     customerLtv,
     retentionRate,
+    retentionDays,
     monthlyTrend,
   })
 }

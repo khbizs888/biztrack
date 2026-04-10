@@ -175,7 +175,7 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo, selec
           </CardHeader>
           <CardContent>
             <div className="text-xl font-bold text-orange-600">{data.retentionRate.toFixed(1)}%</div>
-            <p className="text-xs text-muted-foreground mt-0.5">Customers with 2+ orders</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Repeat within {data.retentionDays}d</p>
           </CardContent>
         </Card>
       </div>
