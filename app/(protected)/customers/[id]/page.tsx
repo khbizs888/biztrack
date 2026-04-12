@@ -1,6 +1,6 @@
 'use client'
 
-import { use, useState, useEffect, useTransition } from 'react'
+import { useState, useEffect, useTransition } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
 import {
@@ -83,8 +83,8 @@ function BrandBadge({ brand }: { brand: string | null }) {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function CustomerDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params)
+export default function CustomerDetailPage({ params }: { params: { id: string } }) {
+  const { id } = params
   const supabase    = createClient()
   const queryClient = useQueryClient()
 

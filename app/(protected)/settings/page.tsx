@@ -40,19 +40,20 @@ export default function SettingsPage() {
   }>>({})
 
   useEffect(() => {
-    if (brandSettings.length > 0) {
+    if (projects.length > 0) {
       const edits: typeof brandEdits = {}
-      for (const s of brandSettings) {
-        edits[s.project_id] = {
-          vip_spend_threshold: String(s.vip_spend_threshold),
-          vip_order_threshold: String(s.vip_order_threshold),
-          retention_days: String(s.retention_days),
-          inactive_days: String(s.inactive_days),
+      for (const p of projects) {
+        const s = brandSettings.find(b => b.project_id === p.id)
+        edits[p.id] = {
+          vip_spend_threshold: String(s?.vip_spend_threshold ?? 2000),
+          vip_order_threshold: String(s?.vip_order_threshold ?? 6),
+          retention_days: String(s?.retention_days ?? 365),
+          inactive_days: String(s?.inactive_days ?? 365),
         }
       }
       setBrandEdits(edits)
     }
-  }, [brandSettings])
+  }, [brandSettings, projects])
 
   const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<PasswordFormData>({
     resolver: zodResolver(passwordSchema),
@@ -171,8 +172,12 @@ export default function SettingsPage() {
         </CardHeader>
         <CardContent className="space-y-6">
           {projects.map(project => {
-            const edit = brandEdits[project.id]
-            if (!edit) return null
+            const edit = brandEdits[project.id] ?? {
+              vip_spend_threshold: '2000',
+              vip_order_threshold: '6',
+              retention_days: '365',
+              inactive_days: '365',
+            }
             return (
               <div key={project.id} className="space-y-3 pb-4 border-b last:border-b-0 last:pb-0">
                 <p className="text-sm font-semibold">{project.name} ({project.code ?? project.name})</p>

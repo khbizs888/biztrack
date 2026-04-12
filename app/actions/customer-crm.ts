@@ -15,6 +15,10 @@ export type CustomerSearchResult = {
   totalOrders: number
   lastOrderDate: string | null
   preferredBrand: string | null
+  isVip: boolean
+  isInactiveVip: boolean
+  vipThreshold: number
+  inactiveDays: number
 }
 
 export type OrderSearchResult = {
@@ -38,7 +42,7 @@ export async function globalSearch(query: string): Promise<SearchResult[]> {
   const esc = query.replace(/[%_]/g, '\\$&')
   const q   = `%${esc}%`
 
-  const [{ data: customers }, { data: orders }] = await Promise.all([
+  const [{ data: customers }, { data: orders }, { data: brandSettings }, { data: projects }] = await Promise.all([
     sb.from('customers')
       .select('id, name, phone, customer_tag, total_spent, total_orders, last_order_date, preferred_brand')
       .or(`name.ilike.${q},phone.ilike.${q}`)
@@ -49,21 +53,58 @@ export async function globalSearch(query: string): Promise<SearchResult[]> {
       .ilike('tracking_number', q)
       .not('tracking_number', 'is', null)
       .limit(4),
+    sb.from('brand_settings').select('project_id, vip_spend_threshold, vip_order_threshold, inactive_days'),
+    sb.from('projects').select('id, name, code'),
   ])
+
+  // Map brand name → brand settings
+  const settingsByBrand: Record<string, { vipSpend: number; vipOrders: number; inactiveDays: number }> = {}
+  for (const bs of brandSettings ?? []) {
+    const proj = (projects ?? []).find(p => p.id === bs.project_id)
+    if (proj) {
+      settingsByBrand[proj.name] = {
+        vipSpend: Number(bs.vip_spend_threshold ?? 2000),
+        vipOrders: Number(bs.vip_order_threshold ?? 6),
+        inactiveDays: Number(bs.inactive_days ?? 365),
+      }
+    }
+  }
+
+  const DEFAULT_VIP_SPEND = 2000
+  const DEFAULT_INACTIVE_DAYS = 365
 
   const results: SearchResult[] = []
 
   for (const c of customers ?? []) {
+    const tag = (c.customer_tag as string) ?? 'New'
+    const totalSpent = Number(c.total_spent ?? 0)
+    const preferredBrand = c.preferred_brand ?? null
+    const brandCfg = preferredBrand ? settingsByBrand[preferredBrand] : null
+    const vipThreshold = brandCfg?.vipSpend ?? DEFAULT_VIP_SPEND
+    const inactiveDays = brandCfg?.inactiveDays ?? DEFAULT_INACTIVE_DAYS
+    const isVip = tag === 'VIP'
+    let isInactiveVip = false
+    if (isVip && c.last_order_date) {
+      const daysSince = Math.floor((Date.now() - new Date(c.last_order_date).getTime()) / 86_400_000)
+      isInactiveVip = daysSince > inactiveDays
+    } else if (isVip && !c.last_order_date) {
+      isInactiveVip = true
+    }
+
     results.push({
       type: 'customer',
       id: c.id,
       name: c.name,
       phone: c.phone ?? '',
-      tag: (c.customer_tag as string) ?? 'New',
-      totalSpent: Number(c.total_spent ?? 0),
+      tag,
+      totalSpent,
       totalOrders: c.total_orders ?? 0,
       lastOrderDate: c.last_order_date ?? null,
-      preferredBrand: c.preferred_brand ?? null,
+      preferredBrand,
+      isVip,
+      isInactiveVip,
+      vipThreshold,
+      inactiveDays,
     })
   }
 

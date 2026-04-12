@@ -788,7 +788,7 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
           quantity:        1,
           import_batch_id: batchId,
           is_cod:          r.isCod,
-          payment_status:  r.isCod ? 'Pending' : 'Settled',
+          payment_status:  'Settled',
           shipping_fee:    r.shippingFee ?? null,
           handling_fee:    r.codAmount   ?? null,
           courier:         r.courier     || null,

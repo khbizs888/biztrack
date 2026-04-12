@@ -729,6 +729,33 @@ export async function deleteOrder(id: string) {
   if (error) throw new Error(error.message)
 }
 
+export async function updateOrder(id: string, payload: {
+  order_date?: string
+  tracking_number?: string | null
+  project_id?: string
+  package_id?: string | null
+  package_name?: string | null
+  product_name?: string
+  total_price?: number
+  channel?: string
+  state?: string | null
+  address?: string | null
+  is_cod?: boolean
+  payment_status?: string
+  status?: string
+  delivery_status?: string | null
+  purchase_reason?: string | null
+}) {
+  const sb = createAdminClient()
+  const { error } = await sb.from('orders').update(payload).eq('id', id)
+  if (error) throw new Error(error.message)
+  // Re-run processOrder to recalculate profit
+  try {
+    const { processOrder } = await import('./order-processing')
+    await processOrder(id)
+  } catch { /* best-effort */ }
+}
+
 // ─────────────────────────────────────────────
 // WRITE — Products
 // ─────────────────────────────────────────────

@@ -45,10 +45,8 @@ export async function processOrder(orderId: string): Promise<{ success: boolean;
       updates.cost_price = typeof pkgCost === 'number' ? pkgCost : 0
     }
 
-    // 5. COD logic
-    if (order.is_cod === true) {
-      updates.payment_status = 'Pending'
-    } else if (order.is_cod === false && order.payment_status !== 'Settled') {
+    // 5. COD logic — all orders default to Settled (COD included)
+    if (order.payment_status !== 'Settled') {
       updates.payment_status = 'Settled'
       updates.settled_at = new Date().toISOString()
     }

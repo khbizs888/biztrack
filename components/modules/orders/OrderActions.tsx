@@ -6,14 +6,16 @@ import { updateOrderStatus, deleteOrder } from '@/app/actions/data'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { toast } from 'sonner'
-import { Trash2 } from 'lucide-react'
+import { Trash2, Pencil } from 'lucide-react'
 import type { Order, OrderStatus } from '@/lib/types'
+import EditOrderModal from './EditOrderModal'
 
 const STATUSES: OrderStatus[] = ['pending', 'processing', 'shipped', 'delivered', 'cancelled']
 
 export default function OrderActions({ order }: { order: Order }) {
   const queryClient = useQueryClient()
   const [updating, setUpdating] = useState(false)
+  const [editOrder, setEditOrder] = useState<Order | null>(null)
 
   async function handleStatusChange(status: string) {
     setUpdating(true)
@@ -42,24 +44,35 @@ export default function OrderActions({ order }: { order: Order }) {
   }
 
   return (
-    <div className="flex items-center gap-1">
-      <Select value={order.status} onValueChange={handleStatusChange} disabled={updating}>
-        <SelectTrigger className="h-7 text-xs w-28">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {STATUSES.map(s => (
-            <SelectItem key={s} value={s} className="text-xs capitalize">{s}</SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      <Button
-        variant="ghost" size="icon"
-        className="h-7 w-7 text-destructive hover:text-destructive"
-        onClick={handleDelete}
-      >
-        <Trash2 className="h-3.5 w-3.5" />
-      </Button>
-    </div>
+    <>
+      <div className="flex items-center gap-1">
+        <Select value={order.status} onValueChange={handleStatusChange} disabled={updating}>
+          <SelectTrigger className="h-7 text-xs w-28">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {STATUSES.map(s => (
+              <SelectItem key={s} value={s} className="text-xs capitalize">{s}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button
+          variant="ghost" size="icon"
+          className="h-7 w-7 text-muted-foreground hover:text-foreground"
+          onClick={() => setEditOrder(order)}
+          title="Edit order"
+        >
+          <Pencil className="h-3.5 w-3.5" />
+        </Button>
+        <Button
+          variant="ghost" size="icon"
+          className="h-7 w-7 text-destructive hover:text-destructive"
+          onClick={handleDelete}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+      <EditOrderModal order={editOrder} onClose={() => setEditOrder(null)} />
+    </>
   )
 }

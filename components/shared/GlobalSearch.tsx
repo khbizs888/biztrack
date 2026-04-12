@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { Search, X, MessageCircle } from 'lucide-react'
+import { Search, X, MessageCircle, Crown, CheckCircle2, AlertTriangle } from 'lucide-react'
 import { globalSearch, type SearchResult, type CustomerSearchResult, type OrderSearchResult } from '@/app/actions/customer-crm'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { BRAND_COLORS } from '@/lib/constants'
@@ -31,13 +31,38 @@ function buildWALink(phone: string | null | undefined): string {
   return `https://wa.me/6${cleaned}`
 }
 
+function VipBadge({ r }: { r: CustomerSearchResult }) {
+  if (!r.isVip) {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500 border border-gray-200">
+        Not VIP
+      </span>
+    )
+  }
+  if (r.isInactiveVip) {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-700 border border-red-300">
+        <AlertTriangle className="h-3 w-3" />
+        INACTIVE VIP
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800 border border-amber-300">
+      <Crown className="h-3 w-3" />
+      VIP
+      <CheckCircle2 className="h-3 w-3 text-amber-600" />
+    </span>
+  )
+}
+
 function CustomerCard({ r, onNavigate }: { r: CustomerSearchResult; onNavigate: () => void }) {
   const waLink = r.phone ? buildWALink(r.phone) : null
   const brandColor = r.preferredBrand ? BRAND_COLORS[r.preferredBrand] : null
 
   return (
     <div
-      className="p-4 hover:bg-muted/40 transition-colors cursor-pointer"
+      className="p-4 hover:bg-muted/40 transition-colors cursor-pointer border-b last:border-b-0"
       onClick={onNavigate}
     >
       <div className="flex items-start justify-between gap-3">
@@ -47,19 +72,28 @@ function CustomerCard({ r, onNavigate }: { r: CustomerSearchResult; onNavigate: 
             <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${TAG_BADGE[r.tag] ?? 'bg-gray-100 text-gray-700 border-gray-200'}`}>
               {r.tag}
             </span>
+            <VipBadge r={r} />
           </div>
           <p className="text-xs text-muted-foreground mt-0.5 font-mono">{r.phone}</p>
-          {r.preferredBrand && (
-            <span className={`inline-flex items-center mt-1.5 px-2 py-0.5 rounded-full text-xs font-medium border ${brandColor ? `${brandColor.bg} ${brandColor.text} ${brandColor.border}` : 'bg-gray-100 text-gray-700 border-gray-200'}`}>
-              {r.preferredBrand}
-            </span>
-          )}
+          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+            {r.preferredBrand && (
+              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${brandColor ? `${brandColor.bg} ${brandColor.text} ${brandColor.border}` : 'bg-gray-100 text-gray-700 border-gray-200'}`}>
+                {r.preferredBrand}
+              </span>
+            )}
+            {r.isVip && (
+              <span className="text-xs text-amber-700">
+                VIP requires RM {r.vipThreshold.toLocaleString()}
+                {r.preferredBrand ? ` for ${r.preferredBrand}` : ''}
+              </span>
+            )}
+          </div>
         </div>
         <div className="text-right shrink-0 space-y-0.5">
           <p className="font-semibold text-sm">{formatCurrency(r.totalSpent)}</p>
           <p className="text-xs text-muted-foreground">{r.totalOrders} order{r.totalOrders !== 1 ? 's' : ''}</p>
           {r.lastOrderDate && (
-            <p className="text-xs text-muted-foreground">{formatDate(r.lastOrderDate)}</p>
+            <p className="text-xs text-muted-foreground">Last: {formatDate(r.lastOrderDate)}</p>
           )}
         </div>
       </div>
@@ -87,7 +121,7 @@ function OrderCard({ r, onNavigate }: { r: OrderSearchResult; onNavigate: () => 
 
   return (
     <div
-      className="p-4 hover:bg-muted/40 transition-colors cursor-pointer"
+      className="p-4 hover:bg-muted/40 transition-colors cursor-pointer border-b last:border-b-0"
       onClick={onNavigate}
     >
       <div className="flex items-start justify-between gap-3">
@@ -186,7 +220,7 @@ export default function GlobalSearch() {
       )}
 
       {showPanel && (
-        <div className="absolute right-0 top-full mt-2 w-[560px] bg-background border rounded-xl shadow-2xl z-50 overflow-hidden">
+        <div className="absolute right-0 top-full mt-2 w-[600px] bg-background border rounded-xl shadow-2xl z-50 overflow-hidden">
           {loading && (
             <div className="px-4 py-6 text-sm text-muted-foreground text-center">Searching…</div>
           )}
@@ -196,7 +230,7 @@ export default function GlobalSearch() {
             </div>
           )}
           {!loading && results.length > 0 && (
-            <div className="divide-y max-h-[80vh] overflow-y-auto">
+            <div className="max-h-[80vh] overflow-y-auto">
               {results.map((r, i) =>
                 r.type === 'customer' ? (
                   <CustomerCard key={i} r={r} onNavigate={() => navigate(r)} />

@@ -81,6 +81,7 @@ export interface Order {
   settled_at: string | null
   delivery_status: string | null
   quantity: number | null
+  state: string | null
   customers?: Customer
   projects?: Project
   packages?: Pick<Package, 'id' | 'name' | 'code'>

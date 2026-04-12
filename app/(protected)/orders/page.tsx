@@ -100,6 +100,7 @@ function TableHeaders({ showDate = false }: { showDate?: boolean }) {
       <TableHead>Platform</TableHead>
       <TableHead>Method</TableHead>
       <TableHead>Payment</TableHead>
+      <TableHead>State</TableHead>
       <TableHead>COD Payout</TableHead>
       <TableHead className="w-28" />
     </TableRow>
@@ -271,7 +272,7 @@ export default function OrdersPage() {
     const pkgName = order.package_snapshot?.name ?? order.package_name ?? '—'
     const isSettled = order.payment_status === 'Settled'
     const isExp = expandedOrders.has(order.id)
-    const colSpan = showDate ? 12 : 11
+    const colSpan = showDate ? 13 : 12
 
     const mainRow = (
       <TableRow
@@ -307,6 +308,9 @@ export default function OrdersPage() {
         <TableCell className="text-sm text-muted-foreground">{order.is_cod ? 'COD' : 'Prepaid'}</TableCell>
         <TableCell>
           {isSettled ? <Badge variant="success">Settled</Badge> : <Badge variant="warning">Pending</Badge>}
+        </TableCell>
+        <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+          {order.state ?? '—'}
         </TableCell>
         <TableCell className="text-sm text-muted-foreground">
           {(order as any).cod_payout ? formatCurrency((order as any).cod_payout) : '—'}
