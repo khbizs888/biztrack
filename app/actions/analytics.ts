@@ -363,7 +363,7 @@ export async function fetchSalesOverview(
   const calcMetrics = (rows: typeof current) => {
     const bookSales = rows.reduce((s, o) => s + Number(o.total_price), 0)
     const settleSales = rows
-      .filter(o => o.payment_status === 'paid' || o.delivery_status === 'delivered' || o.status === 'delivered')
+      .filter(o => o.payment_status === 'Settled' || o.delivery_status === 'delivered' || o.status === 'delivered')
       .reduce((s, o) => s + Number(o.total_price), 0)
     const totalProfit = rows.reduce((s, o) => s + Number(o.profit ?? 0), 0)
     const totalOrders = rows.length

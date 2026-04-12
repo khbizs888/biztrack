@@ -36,7 +36,6 @@ export default function EditOrderModal({ order, onClose }: Props) {
   const [price, setPrice]           = useState('')
   const [channel, setChannel]       = useState('')
   const [state, setState]           = useState('')
-  const [address, setAddress]       = useState('')
   const [isCod, setIsCod]           = useState(false)
   const [paymentStatus, setPaymentStatus] = useState('Settled')
   const [status, setStatus]         = useState('pending')
@@ -52,10 +51,9 @@ export default function EditOrderModal({ order, onClose }: Props) {
     setPackageName(order.package_name ?? order.package_snapshot?.name ?? '')
     setPrice(String(order.total_price ?? ''))
     setChannel(order.channel ?? '')
-    const orderState = (order as any).state ?? ''
+    const orderState = order.state ?? ''
     setState(orderState)
     setCustomState(!!orderState && !MALAYSIA_STATES.includes(orderState))
-    setAddress((order.customers as any)?.address ?? (order as any).address ?? '')
     setIsCod(order.is_cod ?? false)
     setPaymentStatus(order.payment_status ?? 'Settled')
     setStatus(order.status ?? 'pending')
@@ -189,18 +187,6 @@ export default function EditOrderModal({ order, onClose }: Props) {
             {(customState || (state && !MALAYSIA_STATES.includes(state))) && (
               <Input value={state} onChange={e => setState(e.target.value)} placeholder="Enter state / country" />
             )}
-          </div>
-
-          {/* Address */}
-          <div className="space-y-1">
-            <Label className="text-xs">Address</Label>
-            <textarea
-              value={address}
-              onChange={e => setAddress(e.target.value)}
-              rows={2}
-              placeholder="Delivery address..."
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-ring"
-            />
           </div>
 
           {/* COD + Payment Status */}

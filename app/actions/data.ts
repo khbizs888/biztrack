@@ -739,7 +739,6 @@ export async function updateOrder(id: string, payload: {
   total_price?: number
   channel?: string
   state?: string | null
-  address?: string | null
   is_cod?: boolean
   payment_status?: string
   status?: string

@@ -262,11 +262,13 @@ export default function SalesOverviewTab({ projectId, dateFrom, dateTo, selected
       </div>
 
       {/* Sales by State */}
-      {stateData.length > 0 && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Card>
-            <CardHeader><CardTitle className="text-sm font-medium">Revenue by State (Top 10)</CardTitle></CardHeader>
-            <CardContent>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card>
+          <CardHeader><CardTitle className="text-sm font-medium flex items-center gap-2"><BarChart3 className="h-4 w-4" />Revenue by State (Top 10)</CardTitle></CardHeader>
+          <CardContent>
+            {stateData.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-8 text-center">No state data yet. Set the State field when adding orders.</p>
+            ) : (
               <ResponsiveContainer width="100%" height={260}>
                 <BarChart data={stateData.slice(0, 10)} layout="vertical" margin={{ top: 0, right: 16, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
@@ -276,12 +278,16 @@ export default function SalesOverviewTab({ projectId, dateFrom, dateTo, selected
                   <Bar dataKey="revenue" fill="#3b82f6" radius={[0, 4, 4, 0]} />
                 </BarChart>
               </ResponsiveContainer>
-            </CardContent>
-          </Card>
+            )}
+          </CardContent>
+        </Card>
 
-          <Card>
-            <CardHeader><CardTitle className="text-sm font-medium">State Breakdown</CardTitle></CardHeader>
-            <CardContent className="p-0">
+        <Card>
+          <CardHeader><CardTitle className="text-sm font-medium">State Breakdown</CardTitle></CardHeader>
+          <CardContent className="p-0">
+            {stateData.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-8 text-center px-4">No state data available for this period.</p>
+            ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
@@ -306,10 +312,10 @@ export default function SalesOverviewTab({ projectId, dateFrom, dateTo, selected
                   </tbody>
                 </table>
               </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
+            )}
+          </CardContent>
+        </Card>
+      </div>
 
       {/* Orders table with payment confirmation */}
       <SalesOrdersTable projectId={projectId} dateFrom={dateFrom} dateTo={dateTo} />
