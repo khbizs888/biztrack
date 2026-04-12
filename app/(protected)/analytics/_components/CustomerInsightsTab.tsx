@@ -1,12 +1,16 @@
 'use client'
 
 import { useState, useRef } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
 import { fetchCustomerInsights } from '@/app/actions/analytics'
+import { fetchBrandSettings, saveBrandSetting } from '@/app/actions/brand-settings'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { formatCurrency, formatDate } from '@/lib/utils'
-import { Users, UserPlus, Star, Clock, Repeat2, X } from 'lucide-react'
+import { Users, UserPlus, Star, Clock, Repeat2, X, Settings, ChevronDown, ChevronUp } from 'lucide-react'
+import { toast } from 'sonner'
 import {
   PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Legend, LineChart, Line,
@@ -37,9 +41,96 @@ const TAG_BADGE: Record<string, string> = {
 
 type DrillFilter = 'all' | 'new_month' | 'repeat' | 'vip' | 'dormant_lost'
 
+interface SettingRow {
+  project_id: string
+  name: string
+  vip_spend_threshold: string
+  retention_days: string
+  saving: boolean
+}
+
 export default function CustomerInsightsTab({ projectId, dateFrom, dateTo, selectedBrand }: Props) {
   const [drillFilter, setDrillFilter] = useState<DrillFilter>('all')
   const drillRef = useRef<HTMLDivElement>(null)
+  const queryClient = useQueryClient()
+
+  // VIP/Retention settings panel
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingRows, setSettingRows] = useState<SettingRow[]>([])
+
+  const { data: brandSettingsData } = useQuery({
+    queryKey: ['brand-settings'],
+    queryFn: fetchBrandSettings,
+    enabled: settingsOpen,
+  })
+
+  const { data: projectsData } = useQuery({
+    queryKey: ['projects-list'],
+    enabled: settingsOpen,
+    queryFn: async () => {
+      const sb = createClient()
+      const { data } = await sb.from('projects').select('id, name').order('name')
+      return data ?? []
+    },
+  })
+
+  // Sync settingRows when panel opens and data loads
+  useState(() => {
+    if (!settingsOpen || !projectsData || !brandSettingsData) return
+    const rows: SettingRow[] = projectsData.map(p => {
+      const s = brandSettingsData.find(b => b.project_id === p.id)
+      return {
+        project_id: p.id,
+        name: p.name,
+        vip_spend_threshold: String(s?.vip_spend_threshold ?? 2000),
+        retention_days: String(s?.retention_days ?? 365),
+        saving: false,
+      }
+    })
+    setSettingRows(rows)
+  })
+
+  // Also sync when data arrives after panel open
+  const prevSettingsKey = `${settingsOpen}-${projectsData?.length}-${brandSettingsData?.length}`
+  const [lastSyncKey, setLastSyncKey] = useState('')
+  if (settingsOpen && projectsData && brandSettingsData && prevSettingsKey !== lastSyncKey) {
+    setLastSyncKey(prevSettingsKey)
+    const rows: SettingRow[] = projectsData.map(p => {
+      const s = brandSettingsData.find(b => b.project_id === p.id)
+      return {
+        project_id: p.id,
+        name: p.name,
+        vip_spend_threshold: String(s?.vip_spend_threshold ?? 2000),
+        retention_days: String(s?.retention_days ?? 365),
+        saving: false,
+      }
+    })
+    setSettingRows(rows)
+  }
+
+  function updateRow(projectId: string, field: 'vip_spend_threshold' | 'retention_days', value: string) {
+    setSettingRows(prev => prev.map(r => r.project_id === projectId ? { ...r, [field]: value } : r))
+  }
+
+  async function saveRow(row: SettingRow) {
+    setSettingRows(prev => prev.map(r => r.project_id === row.project_id ? { ...r, saving: true } : r))
+    try {
+      const existing = brandSettingsData?.find(b => b.project_id === row.project_id)
+      await saveBrandSetting(row.project_id, {
+        vip_spend_threshold: parseFloat(row.vip_spend_threshold) || 2000,
+        vip_order_threshold: existing?.vip_order_threshold ?? 6,
+        retention_days: parseInt(row.retention_days) || 365,
+        inactive_days: existing?.inactive_days ?? 365,
+      })
+      toast.success(`${row.name} settings saved`)
+      queryClient.invalidateQueries({ queryKey: ['brand-settings'] })
+      queryClient.invalidateQueries({ queryKey: ['customer-insights'] })
+    } catch (e: any) {
+      toast.error(e.message ?? 'Failed to save')
+    } finally {
+      setSettingRows(prev => prev.map(r => r.project_id === row.project_id ? { ...r, saving: false } : r))
+    }
+  }
 
   const { data, isLoading } = useQuery({
     queryKey: ['customer-insights', projectId, dateFrom, dateTo],
@@ -112,6 +203,68 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo, selec
 
   return (
     <div className="space-y-6">
+      {/* VIP & Retention Settings Panel */}
+      <div className="rounded-lg border bg-card">
+        <button
+          onClick={() => setSettingsOpen(v => !v)}
+          className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium hover:bg-muted/50 transition-colors rounded-lg"
+        >
+          <span className="flex items-center gap-2 text-muted-foreground">
+            <Settings className="h-4 w-4" />
+            Configure VIP &amp; Retention Settings
+          </span>
+          {settingsOpen ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+        </button>
+        {settingsOpen && (
+          <div className="border-t px-4 py-3">
+            {settingRows.length === 0 ? (
+              <p className="text-xs text-muted-foreground py-2">Loading brands…</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b">
+                      <th className="pb-2 text-left font-medium text-muted-foreground">Brand</th>
+                      <th className="pb-2 text-right font-medium text-muted-foreground">VIP Spend (RM)</th>
+                      <th className="pb-2 text-right font-medium text-muted-foreground">Retention Days</th>
+                      <th className="pb-2 text-right font-medium text-muted-foreground"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {settingRows.map(row => (
+                      <tr key={row.project_id} className="border-b last:border-0">
+                        <td className="py-2 font-medium">{row.name}</td>
+                        <td className="py-2 pl-4">
+                          <Input
+                            type="number"
+                            className="h-7 w-28 text-xs text-right ml-auto"
+                            value={row.vip_spend_threshold}
+                            onChange={e => updateRow(row.project_id, 'vip_spend_threshold', e.target.value)}
+                          />
+                        </td>
+                        <td className="py-2 pl-4">
+                          <Input
+                            type="number"
+                            className="h-7 w-24 text-xs text-right ml-auto"
+                            value={row.retention_days}
+                            onChange={e => updateRow(row.project_id, 'retention_days', e.target.value)}
+                          />
+                        </td>
+                        <td className="py-2 pl-3">
+                          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => saveRow(row)} disabled={row.saving}>
+                            {row.saving ? 'Saving…' : 'Save'}
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* KPI Cards — clickable */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         {[

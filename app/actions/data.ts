@@ -735,7 +735,6 @@ export async function updateOrder(id: string, payload: {
   project_id?: string
   package_id?: string | null
   package_name?: string | null
-  product_name?: string
   total_price?: number
   channel?: string
   state?: string | null
@@ -746,13 +745,42 @@ export async function updateOrder(id: string, payload: {
   purchase_reason?: string | null
 }) {
   const sb = createAdminClient()
-  const { error } = await sb.from('orders').update(payload).eq('id', id)
+  const updates: Record<string, unknown> = { ...payload }
+
+  // When package changes, refresh snapshot + cost_price
+  if (payload.package_id) {
+    const { data: pkg } = await sb
+      .from('packages')
+      .select('id, name, price, cost, code, custom_attributes')
+      .eq('id', payload.package_id)
+      .single()
+    if (pkg) {
+      updates.package_snapshot = { name: pkg.name, price: pkg.price, code: pkg.code, custom_attributes: pkg.custom_attributes }
+      updates.cost_price = typeof pkg.cost === 'number' ? pkg.cost : 0
+    }
+  } else if (payload.package_id === null) {
+    updates.package_snapshot = null
+    updates.cost_price = 0
+  }
+
+  // Recalculate profit whenever price or package changes
+  if (payload.total_price !== undefined || payload.package_id !== undefined) {
+    const { data: cur } = await sb
+      .from('orders')
+      .select('total_price, cost_price, shipping_fee, handling_fee')
+      .eq('id', id)
+      .single()
+    if (cur) {
+      const totalPrice  = payload.total_price ?? cur.total_price ?? 0
+      const costPrice   = (updates.cost_price as number | undefined) ?? cur.cost_price ?? 0
+      const shippingFee = cur.shipping_fee  ?? 0
+      const handlingFee = cur.handling_fee  ?? 0
+      updates.profit = Number(totalPrice) - Number(costPrice) - Number(shippingFee) - Number(handlingFee)
+    }
+  }
+
+  const { error } = await sb.from('orders').update(updates).eq('id', id)
   if (error) throw new Error(error.message)
-  // Re-run processOrder to recalculate profit
-  try {
-    const { processOrder } = await import('./order-processing')
-    await processOrder(id)
-  } catch { /* best-effort */ }
 }
 
 // ─────────────────────────────────────────────

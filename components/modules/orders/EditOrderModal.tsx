@@ -19,7 +19,9 @@ const MALAYSIA_STATES = [
 ]
 
 const STATUSES = ['pending', 'processing', 'shipped', 'delivered', 'cancelled']
-const PAYMENT_STATUSES = ['Settled', 'Pending']
+const PAYMENT_STATUSES = ['Settled', 'Pending', 'Refunded']
+const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Returned']
+const CHANNELS = ['Facebook', 'TikTok', 'Shopee', 'Lazada', 'Xiaohongshu', 'WhatsApp', 'Website', 'Other']
 
 interface Props { order: Order | null; onClose: () => void }
 
@@ -39,8 +41,10 @@ export default function EditOrderModal({ order, onClose }: Props) {
   const [isCod, setIsCod]           = useState(false)
   const [paymentStatus, setPaymentStatus] = useState('Settled')
   const [status, setStatus]         = useState('pending')
+  const [deliveryStatus, setDeliveryStatus] = useState('Pending')
   const [notes, setNotes]           = useState('')
   const [customState, setCustomState] = useState(false)
+  const [customChannel, setCustomChannel] = useState(false)
 
   useEffect(() => {
     if (!order) return
@@ -50,13 +54,16 @@ export default function EditOrderModal({ order, onClose }: Props) {
     setPackageId(order.package_id ?? '')
     setPackageName(order.package_name ?? order.package_snapshot?.name ?? '')
     setPrice(String(order.total_price ?? ''))
-    setChannel(order.channel ?? '')
+    const orderChannel = order.channel ?? ''
+    setChannel(orderChannel)
+    setCustomChannel(!!orderChannel && !CHANNELS.includes(orderChannel))
     const orderState = order.state ?? ''
     setState(orderState)
     setCustomState(!!orderState && !MALAYSIA_STATES.includes(orderState))
     setIsCod(order.is_cod ?? false)
     setPaymentStatus(order.payment_status ?? 'Settled')
     setStatus(order.status ?? 'pending')
+    setDeliveryStatus(order.delivery_status ?? 'Pending')
     setNotes(order.purchase_reason ?? '')
   }, [order])
 
@@ -87,6 +94,7 @@ export default function EditOrderModal({ order, onClose }: Props) {
         is_cod: isCod,
         payment_status: paymentStatus,
         status,
+        delivery_status: deliveryStatus || null,
         purchase_reason: notes || null,
       })
       toast.success('Order updated')
@@ -130,7 +138,22 @@ export default function EditOrderModal({ order, onClose }: Props) {
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Channel</Label>
-              <Input value={channel} onChange={e => setChannel(e.target.value)} placeholder="e.g. Facebook" />
+              <Select
+                value={CHANNELS.includes(channel) ? channel : channel ? 'custom' : ''}
+                onValueChange={v => {
+                  if (v === 'custom') { setCustomChannel(true); setChannel('') }
+                  else { setCustomChannel(false); setChannel(v) }
+                }}
+              >
+                <SelectTrigger><SelectValue placeholder="Select channel" /></SelectTrigger>
+                <SelectContent>
+                  {CHANNELS.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  <SelectItem value="custom">Custom…</SelectItem>
+                </SelectContent>
+              </Select>
+              {(customChannel || (channel && !CHANNELS.includes(channel))) && (
+                <Input className="mt-1.5" value={channel} onChange={e => setChannel(e.target.value)} placeholder="Enter channel name" />
+              )}
             </div>
           </div>
 
@@ -210,6 +233,17 @@ export default function EditOrderModal({ order, onClose }: Props) {
                 </SelectContent>
               </Select>
             </div>
+          </div>
+
+          {/* Delivery Status */}
+          <div className="space-y-1">
+            <Label className="text-xs">Delivery Status</Label>
+            <Select value={deliveryStatus} onValueChange={setDeliveryStatus}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {DELIVERY_STATUSES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+              </SelectContent>
+            </Select>
           </div>
 
           {/* Notes */}
