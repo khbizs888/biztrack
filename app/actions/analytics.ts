@@ -457,25 +457,33 @@ export async function fetchCustomerInsights(
   //    "New This Month" means "first order with this brand was this month",
   //    not "first order ever was this month".
 
-  // ── Fetch retention_days from brand_settings ─────────────────────────────────
+  // ── Fetch retention/VIP thresholds from brand_settings ──────────────────────
   let retentionDays = 365
+  let vipSpendThreshold = 2000
+  let vipOrderThreshold = 6
   if (projectId) {
     const { data: bSettings } = await sb
       .from('brand_settings')
-      .select('retention_days')
+      .select('retention_days, vip_spend_threshold, vip_order_threshold')
       .eq('project_id', projectId)
       .single()
-    if (bSettings) retentionDays = Number(bSettings.retention_days ?? 365)
+    if (bSettings) {
+      retentionDays = Number(bSettings.retention_days ?? 365)
+      vipSpendThreshold = Number(bSettings.vip_spend_threshold ?? 2000)
+      vipOrderThreshold = Number(bSettings.vip_order_threshold ?? 6)
+    }
   }
 
   let brandCustomerIds: string[] | null = null
   // customerId → earliest order_date for this specific project
   const brandFirstOrderDate: Record<string, string> = {}
+  // per-customer project-specific settled spend, order count, and last order date
+  const customerProjectData: Record<string, { spend: number; orders: number; lastOrderDate: string }> = {}
 
   if (projectId) {
     const { data: projOrders } = await sb
       .from('orders')
-      .select('customer_id, order_date')
+      .select('customer_id, order_date, total_price, payment_status')
       .eq('project_id', projectId)
       .not('customer_id', 'is', null)
       .order('order_date', { ascending: true })
@@ -483,6 +491,14 @@ export async function fetchCustomerInsights(
     for (const o of projOrders ?? []) {
       const cid = o.customer_id as string
       if (!brandFirstOrderDate[cid]) brandFirstOrderDate[cid] = o.order_date
+      if (!customerProjectData[cid]) customerProjectData[cid] = { spend: 0, orders: 0, lastOrderDate: o.order_date }
+      if (o.payment_status === 'Settled') {
+        customerProjectData[cid].spend += Number(o.total_price ?? 0)
+        customerProjectData[cid].orders++
+      }
+      if (o.order_date > customerProjectData[cid].lastOrderDate) {
+        customerProjectData[cid].lastOrderDate = o.order_date
+      }
     }
     brandCustomerIds = Object.keys(brandFirstOrderDate)
 
@@ -537,8 +553,30 @@ export async function fetchCustomerInsights(
 
   const all = customers ?? []
   const total = all.length
-  const vipCount = all.filter(c => c.customer_tag === 'VIP').length
-  const dormantCount = all.filter(c => c.customer_tag === 'Dormant' || c.customer_tag === 'Lost').length
+
+  // ── VIP & Dormant: compute dynamically from brand_settings thresholds ────────
+  // When project-scoped, use per-brand settled spend/orders and last order date.
+  // VIP = settled spend >= vip_spend_threshold OR settled order count >= vip_order_threshold
+  // Dormant/Lost = last order for this brand was more than retentionDays ago
+  let vipCount: number
+  let dormantCount: number
+  if (projectId && brandCustomerIds && brandCustomerIds.length > 0) {
+    const retentionCutoffStr = format(subDays(today, retentionDays), 'yyyy-MM-dd')
+    vipCount = brandCustomerIds.filter(cid => {
+      const d = customerProjectData[cid]
+      if (!d) return false
+      return d.spend >= vipSpendThreshold || d.orders >= vipOrderThreshold
+    }).length
+    dormantCount = brandCustomerIds.filter(cid => {
+      const d = customerProjectData[cid]
+      if (!d) return true
+      return d.lastOrderDate < retentionCutoffStr
+    }).length
+  } else {
+    vipCount = all.filter(c => c.customer_tag === 'VIP').length
+    dormantCount = all.filter(c => c.customer_tag === 'Dormant' || c.customer_tag === 'Lost').length
+  }
+
   const repeatCount = all.filter(c => (c.total_orders ?? 0) >= 2).length
 
   // "New this month": when brand-filtered, use the customer's first order date

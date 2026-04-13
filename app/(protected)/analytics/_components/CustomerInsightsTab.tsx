@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
 import { fetchCustomerInsights } from '@/app/actions/analytics'
@@ -58,13 +58,13 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo, selec
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingRows, setSettingRows] = useState<SettingRow[]>([])
 
-  const { data: brandSettingsData } = useQuery({
+  const { data: brandSettingsData, isError: brandSettingsError } = useQuery({
     queryKey: ['brand-settings'],
     queryFn: fetchBrandSettings,
     enabled: settingsOpen,
   })
 
-  const { data: projectsData } = useQuery({
+  const { data: projectsData, isError: projectsError } = useQuery({
     queryKey: ['projects-list'],
     enabled: settingsOpen,
     queryFn: async () => {
@@ -74,8 +74,8 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo, selec
     },
   })
 
-  // Sync settingRows when panel opens and data loads
-  useState(() => {
+  // Sync settingRows when both queries have loaded
+  useEffect(() => {
     if (!settingsOpen || !projectsData || !brandSettingsData) return
     const rows: SettingRow[] = projectsData.map(p => {
       const s = brandSettingsData.find(b => b.project_id === p.id)
@@ -88,25 +88,7 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo, selec
       }
     })
     setSettingRows(rows)
-  })
-
-  // Also sync when data arrives after panel open
-  const prevSettingsKey = `${settingsOpen}-${projectsData?.length}-${brandSettingsData?.length}`
-  const [lastSyncKey, setLastSyncKey] = useState('')
-  if (settingsOpen && projectsData && brandSettingsData && prevSettingsKey !== lastSyncKey) {
-    setLastSyncKey(prevSettingsKey)
-    const rows: SettingRow[] = projectsData.map(p => {
-      const s = brandSettingsData.find(b => b.project_id === p.id)
-      return {
-        project_id: p.id,
-        name: p.name,
-        vip_spend_threshold: String(s?.vip_spend_threshold ?? 2000),
-        retention_days: String(s?.retention_days ?? 365),
-        saving: false,
-      }
-    })
-    setSettingRows(rows)
-  }
+  }, [settingsOpen, projectsData, brandSettingsData])
 
   function updateRow(projectId: string, field: 'vip_spend_threshold' | 'retention_days', value: string) {
     setSettingRows(prev => prev.map(r => r.project_id === projectId ? { ...r, [field]: value } : r))
@@ -218,7 +200,9 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo, selec
         {settingsOpen && (
           <div className="border-t px-4 py-3">
             {settingRows.length === 0 ? (
-              <p className="text-xs text-muted-foreground py-2">Loading brands…</p>
+              brandSettingsError || projectsError
+                ? <p className="text-xs text-red-500 py-2">Failed to load settings. Please refresh and try again.</p>
+                : <p className="text-xs text-muted-foreground py-2">Loading brands…</p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
