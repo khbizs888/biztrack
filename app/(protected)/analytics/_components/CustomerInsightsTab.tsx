@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
 import { fetchCustomerInsights } from '@/app/actions/analytics'
 import { fetchBrandSettings, saveBrandSetting } from '@/app/actions/brand-settings'
+import { fetchProjects } from '@/app/actions/projects'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -45,6 +46,7 @@ interface SettingRow {
   project_id: string
   name: string
   vip_spend_threshold: string
+  vip_order_threshold: string
   retention_days: string
   saving: boolean
 }
@@ -57,55 +59,52 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo, selec
   // VIP/Retention settings panel
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingRows, setSettingRows] = useState<SettingRow[]>([])
+  const [settingsLoading, setSettingsLoading] = useState(false)
+  const [settingsError, setSettingsError] = useState(false)
 
-  const { data: brandSettingsData, isError: brandSettingsError } = useQuery({
-    queryKey: ['brand-settings'],
-    queryFn: fetchBrandSettings,
-    enabled: settingsOpen,
-  })
-
-  const { data: projectsData, isError: projectsError } = useQuery({
-    queryKey: ['projects-list'],
-    enabled: settingsOpen,
-    queryFn: async () => {
-      const sb = createClient()
-      const { data } = await sb.from('projects').select('id, name').order('name')
-      return data ?? []
-    },
-  })
-
-  // Sync settingRows when both queries have loaded
   useEffect(() => {
-    if (!settingsOpen || !projectsData || !brandSettingsData) return
-    const rows: SettingRow[] = projectsData.map(p => {
-      const s = brandSettingsData.find(b => b.project_id === p.id)
-      return {
-        project_id: p.id,
-        name: p.name,
-        vip_spend_threshold: String(s?.vip_spend_threshold ?? 2000),
-        retention_days: String(s?.retention_days ?? 365),
-        saving: false,
-      }
-    })
-    setSettingRows(rows)
-  }, [settingsOpen, projectsData, brandSettingsData])
+    if (!settingsOpen) return
+    setSettingsLoading(true)
+    setSettingsError(false)
+    console.log('[CustomerInsights] fetching projects + brand settings…')
+    Promise.all([fetchProjects(), fetchBrandSettings()])
+      .then(([projects, settings]) => {
+        console.log('[CustomerInsights] projects:', projects.length, 'brand settings:', settings.length)
+        const rows: SettingRow[] = projects.map((p: { id: string; name: string }) => {
+          const bs = settings.find(s => s.project_id === p.id)
+          console.log(`[CustomerInsights] ${p.name} → vip_spend=${bs?.vip_spend_threshold}, vip_orders=${bs?.vip_order_threshold}, retention=${bs?.retention_days}`)
+          return {
+            project_id: p.id,
+            name: p.name,
+            vip_spend_threshold: String(bs?.vip_spend_threshold ?? 2000),
+            vip_order_threshold: String(bs?.vip_order_threshold ?? 6),
+            retention_days: String(bs?.retention_days ?? 365),
+            saving: false,
+          }
+        })
+        setSettingRows(rows)
+      })
+      .catch((err) => {
+        console.error('[CustomerInsights] failed to load settings:', err)
+        setSettingsError(true)
+      })
+      .finally(() => setSettingsLoading(false))
+  }, [settingsOpen])
 
-  function updateRow(projectId: string, field: 'vip_spend_threshold' | 'retention_days', value: string) {
+  function updateRow(projectId: string, field: 'vip_spend_threshold' | 'vip_order_threshold' | 'retention_days', value: string) {
     setSettingRows(prev => prev.map(r => r.project_id === projectId ? { ...r, [field]: value } : r))
   }
 
   async function saveRow(row: SettingRow) {
     setSettingRows(prev => prev.map(r => r.project_id === row.project_id ? { ...r, saving: true } : r))
     try {
-      const existing = brandSettingsData?.find(b => b.project_id === row.project_id)
       await saveBrandSetting(row.project_id, {
         vip_spend_threshold: parseFloat(row.vip_spend_threshold) || 2000,
-        vip_order_threshold: existing?.vip_order_threshold ?? 6,
+        vip_order_threshold: parseInt(row.vip_order_threshold) || 6,
         retention_days: parseInt(row.retention_days) || 365,
-        inactive_days: existing?.inactive_days ?? 365,
+        inactive_days: 365,
       })
       toast.success(`${row.name} settings saved`)
-      queryClient.invalidateQueries({ queryKey: ['brand-settings'] })
       queryClient.invalidateQueries({ queryKey: ['customer-insights'] })
     } catch (e: any) {
       toast.error(e.message ?? 'Failed to save')
@@ -199,10 +198,10 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo, selec
         </button>
         {settingsOpen && (
           <div className="border-t px-4 py-3">
-            {settingRows.length === 0 ? (
-              brandSettingsError || projectsError
-                ? <p className="text-xs text-red-500 py-2">Failed to load settings. Please refresh and try again.</p>
-                : <p className="text-xs text-muted-foreground py-2">Loading brands…</p>
+            {settingsError ? (
+              <p className="text-xs text-red-500 py-2">Failed to load settings — check console for details.</p>
+            ) : settingsLoading || settingRows.length === 0 ? (
+              <p className="text-xs text-muted-foreground py-2">Loading brands…</p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
@@ -210,6 +209,7 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo, selec
                     <tr className="border-b">
                       <th className="pb-2 text-left font-medium text-muted-foreground">Brand</th>
                       <th className="pb-2 text-right font-medium text-muted-foreground">VIP Spend (RM)</th>
+                      <th className="pb-2 text-right font-medium text-muted-foreground">VIP Orders</th>
                       <th className="pb-2 text-right font-medium text-muted-foreground">Retention Days</th>
                       <th className="pb-2 text-right font-medium text-muted-foreground"></th>
                     </tr>
@@ -224,6 +224,14 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo, selec
                             className="h-7 w-28 text-xs text-right ml-auto"
                             value={row.vip_spend_threshold}
                             onChange={e => updateRow(row.project_id, 'vip_spend_threshold', e.target.value)}
+                          />
+                        </td>
+                        <td className="py-2 pl-4">
+                          <Input
+                            type="number"
+                            className="h-7 w-20 text-xs text-right ml-auto"
+                            value={row.vip_order_threshold}
+                            onChange={e => updateRow(row.project_id, 'vip_order_threshold', e.target.value)}
                           />
                         </td>
                         <td className="py-2 pl-4">

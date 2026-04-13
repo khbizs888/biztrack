@@ -462,16 +462,20 @@ export async function fetchCustomerInsights(
   let vipSpendThreshold = 2000
   let vipOrderThreshold = 6
   if (projectId) {
-    const { data: bSettings } = await sb
+    const { data: bSettings, error: bSettingsErr } = await sb
       .from('brand_settings')
       .select('retention_days, vip_spend_threshold, vip_order_threshold')
       .eq('project_id', projectId)
       .single()
+    if (bSettingsErr) {
+      console.warn(`[fetchCustomerInsights] brand_settings not found for project ${projectId}:`, bSettingsErr.message, '— using defaults')
+    }
     if (bSettings) {
       retentionDays = Number(bSettings.retention_days ?? 365)
       vipSpendThreshold = Number(bSettings.vip_spend_threshold ?? 2000)
       vipOrderThreshold = Number(bSettings.vip_order_threshold ?? 6)
     }
+    console.log(`[fetchCustomerInsights] thresholds — vip_spend=${vipSpendThreshold}, vip_orders=${vipOrderThreshold}, retention=${retentionDays}d`)
   }
 
   let brandCustomerIds: string[] | null = null
@@ -562,6 +566,8 @@ export async function fetchCustomerInsights(
   let dormantCount: number
   if (projectId && brandCustomerIds && brandCustomerIds.length > 0) {
     const retentionCutoffStr = format(subDays(today, retentionDays), 'yyyy-MM-dd')
+    const sampleCid = brandCustomerIds[0]
+    console.log(`[fetchCustomerInsights] sample customer ${sampleCid} project data:`, customerProjectData[sampleCid])
     vipCount = brandCustomerIds.filter(cid => {
       const d = customerProjectData[cid]
       if (!d) return false
@@ -572,9 +578,11 @@ export async function fetchCustomerInsights(
       if (!d) return true
       return d.lastOrderDate < retentionCutoffStr
     }).length
+    console.log(`[fetchCustomerInsights] vipCount=${vipCount} dormantCount=${dormantCount} total=${brandCustomerIds.length} retentionCutoff=${retentionCutoffStr}`)
   } else {
     vipCount = all.filter(c => c.customer_tag === 'VIP').length
     dormantCount = all.filter(c => c.customer_tag === 'Dormant' || c.customer_tag === 'Lost').length
+    console.log(`[fetchCustomerInsights] fallback — vipCount=${vipCount} dormantCount=${dormantCount}`)
   }
 
   const repeatCount = all.filter(c => (c.total_orders ?? 0) >= 2).length
