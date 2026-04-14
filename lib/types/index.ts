@@ -23,6 +23,9 @@ export interface CustomerCRM {
   last_contacted_at: string | null
   follow_up_date: string | null
   follow_up_note: string | null
+  // Receipt (migration 023)
+  receipt_url: string | null
+  receipt_uploaded_at: string | null
 }
 
 export type AttributeType = 'text' | 'number' | 'boolean' | 'select'
@@ -40,6 +43,7 @@ export interface Customer {
   phone: string
   address: string | null
   created_at: string
+  receipt_url?: string | null
 }
 
 export interface CustomerWithStats extends Customer {

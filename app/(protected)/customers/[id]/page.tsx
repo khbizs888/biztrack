@@ -1,12 +1,13 @@
 'use client'
 
-import { useState, useEffect, useTransition } from 'react'
+import { useState, useEffect, useTransition, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
 import {
   setFollowUp, markContacted, updateCustomerNotes, refreshCustomerStats,
   changeCustomerTag, addCustomerRemark, fetchCustomerRemarks,
 } from '@/app/actions/customer-crm'
+import { uploadCustomerReceipt, removeCustomerReceipt } from '@/app/actions/customers'
 import PageHeader from '@/components/shared/PageHeader'
 import { LoadingSpinner } from '@/components/shared/LoadingState'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -19,7 +20,7 @@ import { BRAND_COLORS } from '@/lib/constants'
 import {
   MessageCircle, Crown, RefreshCw, Bell, TrendingDown, ShoppingCart,
   DollarSign, TrendingUp, Calendar, UserCheck, Phone, StickyNote,
-  BarChart3, Tag, Send, Clock,
+  BarChart3, Tag, Send, Clock, ImageIcon, Upload, Trash2,
 } from 'lucide-react'
 import { format, differenceInDays } from 'date-fns'
 import { toast } from 'sonner'
@@ -101,6 +102,10 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
   const [isRefreshing,   startRefreshing]   = useTransition()
   const [isChangingTag,  startChangingTag]  = useTransition()
   const [isAddingRemark, startAddingRemark] = useTransition()
+
+  const receiptInputRef = useRef<HTMLInputElement>(null)
+  const [isUploading, setIsUploading] = useState(false)
+  const [isRemoving,  setIsRemoving]  = useState(false)
 
   const { data: customer, isLoading } = useQuery<CustomerCRM | null>({
     queryKey: ['customer-crm', id],
@@ -241,6 +246,40 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
     })
   }
 
+  async function handleReceiptUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const formData = new FormData()
+    formData.append('file', file)
+    setIsUploading(true)
+    try {
+      await uploadCustomerReceipt(id, formData)
+      toast.success('Receipt uploaded')
+      queryClient.invalidateQueries({ queryKey: ['customer-crm', id] })
+    } catch (err: any) {
+      toast.error(err.message ?? 'Upload failed')
+    } finally {
+      setIsUploading(false)
+      if (e.target) e.target.value = ''
+    }
+  }
+
+  async function handleRemoveReceipt() {
+    if (!customer?.receipt_url) return
+    const match = customer.receipt_url.match(/\/receipts\/(.+)$/)
+    const storagePath = match?.[1] ?? ''
+    setIsRemoving(true)
+    try {
+      await removeCustomerReceipt(id, storagePath)
+      toast.success('Receipt removed')
+      queryClient.invalidateQueries({ queryKey: ['customer-crm', id] })
+    } catch (err: any) {
+      toast.error(err.message ?? 'Failed to remove receipt')
+    } finally {
+      setIsRemoving(false)
+    }
+  }
+
   if (isLoading) return <LoadingSpinner />
   if (!customer) return <p className="text-muted-foreground">Customer not found.</p>
 
@@ -343,6 +382,76 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
               <p className="font-semibold">{customer.preferred_platform ?? '—'}</p>
             </div>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Payment Receipt */}
+      <Card className="shadow-sm">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm font-medium flex items-center gap-2">
+            <ImageIcon className="h-4 w-4 text-blue-500" />
+            Payment Receipt
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {customer.receipt_url ? (
+            <div className="space-y-3">
+              <a href={customer.receipt_url} target="_blank" rel="noopener noreferrer">
+                <img
+                  src={customer.receipt_url}
+                  alt="Payment receipt"
+                  className="max-h-[200px] rounded-lg border object-contain cursor-pointer hover:opacity-80 transition-opacity"
+                />
+              </a>
+              {customer.receipt_uploaded_at && (
+                <p className="text-xs text-muted-foreground">
+                  Uploaded: {format(new Date(customer.receipt_uploaded_at), 'dd MMM yyyy')}
+                </p>
+              )}
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => receiptInputRef.current?.click()}
+                  disabled={isUploading}
+                >
+                  <Upload className="h-3.5 w-3.5 mr-1.5" />
+                  Replace
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="text-red-600 border-red-200 hover:bg-red-50"
+                  onClick={handleRemoveReceipt}
+                  disabled={isRemoving}
+                >
+                  <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+                  {isRemoving ? 'Removing…' : 'Remove'}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div
+              className="border-2 border-dashed rounded-lg p-6 text-center cursor-pointer hover:bg-muted/20 transition-colors"
+              onClick={() => receiptInputRef.current?.click()}
+            >
+              <Upload className="h-6 w-6 mx-auto text-muted-foreground mb-2" />
+              <p className="text-sm text-muted-foreground">Click or drag to upload receipt</p>
+              <p className="text-xs text-muted-foreground mt-1">JPG, PNG, WEBP, PDF</p>
+            </div>
+          )}
+          {isUploading && (
+            <p className="text-xs text-muted-foreground mt-2 animate-pulse">Uploading…</p>
+          )}
+          <input
+            ref={receiptInputRef}
+            type="file"
+            accept=".jpg,.jpeg,.png,.webp,.pdf"
+            className="hidden"
+            onChange={handleReceiptUpload}
+          />
         </CardContent>
       </Card>
 

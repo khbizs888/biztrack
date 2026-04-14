@@ -157,7 +157,7 @@ export async function fetchOrders(filters: OrderFilters = {}): Promise<Paginated
 
   let q = sb
     .from('orders')
-    .select('*, customers(id, name, phone, address), projects(id, name, code), packages(id, name, code)', { count: 'exact' })
+    .select('*, customers(id, name, phone, address, receipt_url), projects(id, name, code), packages(id, name, code)', { count: 'exact' })
     .order('order_date', { ascending: false })
     .order('created_at', { ascending: false })
 

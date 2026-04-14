@@ -132,7 +132,7 @@ export default function SettingsPage() {
               placeholder="Your name"
             />
           </div>
-          <Button onClick={saveProfile} disabled={savingProfile} size="sm">
+          <Button type="button" onClick={saveProfile} disabled={savingProfile} size="sm">
             {savingProfile ? 'Saving...' : 'Save Profile'}
           </Button>
         </CardContent>
@@ -144,7 +144,7 @@ export default function SettingsPage() {
           <CardDescription>Use a strong password with at least 6 characters</CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleSubmit(changePassword)} className="space-y-4">
+          <div className="space-y-4">
             <div className="space-y-1">
               <Label>New Password</Label>
               <Input type="password" placeholder="••••••••" {...register('password')} />
@@ -155,10 +155,10 @@ export default function SettingsPage() {
               <Input type="password" placeholder="••••••••" {...register('confirmPassword')} />
               {errors.confirmPassword && <p className="text-xs text-destructive">{errors.confirmPassword.message}</p>}
             </div>
-            <Button type="submit" size="sm" disabled={isSubmitting}>
+            <Button type="button" size="sm" onClick={handleSubmit(changePassword)} disabled={isSubmitting}>
               {isSubmitting ? 'Updating...' : 'Update Password'}
             </Button>
-          </form>
+          </div>
         </CardContent>
       </Card>
 
@@ -224,6 +224,7 @@ export default function SettingsPage() {
                   </div>
                 </div>
                 <Button
+                  type="button"
                   size="sm"
                   variant="outline"
                   onClick={() => handleSaveBrandSetting(project.id)}

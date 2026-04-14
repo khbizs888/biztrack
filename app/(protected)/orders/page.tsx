@@ -12,8 +12,9 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { formatCurrency, formatDate } from '@/lib/utils'
-import { Plus, ShoppingCart, FileDown, FileUp, History, Calendar, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-react'
+import { Plus, ShoppingCart, Download, FileUp, History, Calendar, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-react'
 import type { OrderFilters, Order } from '@/lib/types'
+import { exportOrders } from '@/lib/export-utils'
 import AddOrderModal from '@/components/modules/orders/AddOrderModal'
 import ImportOrdersModal from '@/components/modules/orders/ImportOrdersModal'
 import OrderActions from '@/components/modules/orders/OrderActions'
@@ -241,28 +242,8 @@ export default function OrdersPage() {
     setExpandedOrders(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
   }
 
-  function exportCSV() {
-    const header = 'Date,Time,Tracking #,Customer,Phone,Brand,Package,Amount,Platform,Payment Method,Payment Status,COD Payout\n'
-    const rows = filteredOrders.map(o => [
-      o.order_date,
-      o.created_at ? new Date(o.created_at).toLocaleTimeString('en-MY', { hour: '2-digit', minute: '2-digit' }) : '',
-      o.tracking_number ?? '',
-      (o.customers as any)?.name ?? '',
-      (o.customers as any)?.phone ?? '',
-      (o.projects as any)?.name ?? '',
-      o.package_snapshot?.name ?? o.package_name ?? '',
-      o.total_price,
-      o.channel ?? '',
-      o.is_cod ? 'COD' : 'Prepaid',
-      o.payment_status ?? '',
-      (o as any).cod_payout ?? '',
-    ].map(v => `"${v}"`).join(','))
-    const csv = header + rows.join('\n')
-    const blob = new Blob([csv], { type: 'text/csv' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url; a.download = `orders-${dateFrom}-to-${dateTo}.csv`; a.click()
-    URL.revokeObjectURL(url)
+  function handleExport() {
+    exportOrders(filteredOrders, selectedBrand)
   }
 
   // Render order rows (main + expandable detail) — returns array for flatMap
@@ -345,8 +326,8 @@ export default function OrdersPage() {
   return (
     <div>
       <PageHeader title="Orders" description={`Orders: ${fmtRangeHeader(dateFrom, dateTo)}`}>
-        <Button variant="outline" size="sm" onClick={exportCSV}>
-          <FileDown className="h-4 w-4 mr-1" />Export
+        <Button variant="outline" size="sm" onClick={handleExport}>
+          <Download className="h-4 w-4 mr-1" />Export CSV
         </Button>
         <Button variant="outline" size="sm" onClick={() => setShowImportModal(true)}>
           <FileUp className="h-4 w-4 mr-1" />Import CSV
