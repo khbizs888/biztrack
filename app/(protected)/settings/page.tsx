@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useTransition } from 'react'
+import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { fetchBrandSettings, saveBrandSetting } from '@/app/actions/brand-settings'
 import type { BrandSetting } from '@/app/actions/brand-settings'
@@ -29,21 +29,18 @@ export default function SettingsPage() {
 
   const { projects } = useProjects()
 
-  // Fetch brand settings via startTransition so the in-flight server-action
-  // POST does not block client-side navigation while the data loads.
   const [brandSettings, setBrandSettings] = useState<BrandSetting[]>([])
-  const [, startBrandFetch] = useTransition()
 
   function refreshBrandSettings() {
-    startBrandFetch(async () => {
-      try {
-        const data = await fetchBrandSettings()
-        setBrandSettings(data)
-      } catch {}
-    })
+    fetchBrandSettings().then(setBrandSettings).catch(() => {})
   }
 
-  useEffect(() => { refreshBrandSettings() }, [])
+  // Delay the server-action POST until after React's first paint so navigation
+  // handlers are registered and clicks aren't blocked by the in-flight request.
+  useEffect(() => {
+    const timer = setTimeout(refreshBrandSettings, 100)
+    return () => clearTimeout(timer)
+  }, [])
 
   // Local editable state for brand settings
   const [brandEdits, setBrandEdits] = useState<Record<string, {

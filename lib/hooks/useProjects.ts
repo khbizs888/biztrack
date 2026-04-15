@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useTransition } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { toast } from 'sonner'
 import {
   fetchProjectsWithPackages,
@@ -63,7 +63,6 @@ function saveCache(projects: Project[]) {
 export function useProjects() {
   const [projects, setProjects] = useState<Project[]>([])
   const [ready, setReady] = useState(false)
-  const [, startFetch] = useTransition()
 
   useEffect(() => {
     const cached = loadCache()
@@ -72,11 +71,8 @@ export function useProjects() {
       setReady(true)
     }
 
-    // startTransition marks this server-action fetch as a non-urgent background
-    // update, preventing the in-flight POST from blocking client-side navigation.
-    startFetch(async () => {
-      try {
-        const data = await fetchProjectsWithPackages()
+    fetchProjectsWithPackages()
+      .then(data => {
         // Supabase doesn't return customFields — preserve them from current local state
         setProjects(prev => {
           const fieldMap: Record<string, CustomField[]> = {}
@@ -89,10 +85,11 @@ export function useProjects() {
           return merged
         })
         setReady(true)
-      } catch {
+      })
+      .catch(err => {
+        console.error('[useProjects] fetchProjectsWithPackages failed:', err)
         if (!cached) setReady(true)
-      }
-    })
+      })
   }, [])
 
   const sync = useCallback((next: Project[]) => {
