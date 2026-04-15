@@ -475,7 +475,6 @@ export async function fetchCustomerInsights(
       vipSpendThreshold = Number(bSettings.vip_spend_threshold ?? 2000)
       vipOrderThreshold = Number(bSettings.vip_order_threshold ?? 6)
     }
-    console.log(`[fetchCustomerInsights] thresholds — vip_spend=${vipSpendThreshold}, vip_orders=${vipOrderThreshold}, retention=${retentionDays}d`)
   }
 
   let brandCustomerIds: string[] | null = null
@@ -566,8 +565,6 @@ export async function fetchCustomerInsights(
   let dormantCount: number
   if (projectId && brandCustomerIds && brandCustomerIds.length > 0) {
     const retentionCutoffStr = format(subDays(today, retentionDays), 'yyyy-MM-dd')
-    const sampleCid = brandCustomerIds[0]
-    console.log(`[fetchCustomerInsights] sample customer ${sampleCid} project data:`, customerProjectData[sampleCid])
     vipCount = brandCustomerIds.filter(cid => {
       const d = customerProjectData[cid]
       if (!d) return false
@@ -578,11 +575,9 @@ export async function fetchCustomerInsights(
       if (!d) return true
       return d.lastOrderDate < retentionCutoffStr
     }).length
-    console.log(`[fetchCustomerInsights] vipCount=${vipCount} dormantCount=${dormantCount} total=${brandCustomerIds.length} retentionCutoff=${retentionCutoffStr}`)
   } else {
     vipCount = all.filter(c => c.customer_tag === 'VIP').length
     dormantCount = all.filter(c => c.customer_tag === 'Dormant' || c.customer_tag === 'Lost').length
-    console.log(`[fetchCustomerInsights] fallback — vipCount=${vipCount} dormantCount=${dormantCount}`)
   }
 
   const repeatCount = all.filter(c => (c.total_orders ?? 0) >= 2).length

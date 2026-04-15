@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation'
 import Sidebar from '@/components/shared/Sidebar'
 import GlobalSearch from '@/components/shared/GlobalSearch'
 import { applyTheme, loadTheme } from '@/lib/theme'
+import { toast } from 'sonner'
 
 function ThemeInitializer() {
   useEffect(() => {
@@ -28,6 +29,8 @@ function DialogArtifactCleaner() {
       root.removeAttribute('aria-hidden')
       root.removeAttribute('inert')
     }
+    // Dismiss stale toasts from previous pages so they don't bleed across navigation
+    toast.dismiss()
   }, [pathname])
 
   useEffect(() => {

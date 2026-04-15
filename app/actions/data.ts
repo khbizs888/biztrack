@@ -925,25 +925,15 @@ function mapDbProject(p: any) {
 export async function fetchProjectsWithPackages() {
   const sb = await createClient()
 
-  console.log('[fetchProjectsWithPackages] URL:', process.env.NEXT_PUBLIC_SUPABASE_URL)
-
   // Seed if empty
   const { count, error: countErr } = await sb
     .from('projects')
     .select('*', { count: 'exact', head: true })
 
-  if (countErr) {
-    console.error('[fetchProjectsWithPackages] count error:', countErr.message)
-    throw new Error(countErr.message)
-  }
-
-  console.log('[fetchProjectsWithPackages] project count:', count)
+  if (countErr) throw new Error(countErr.message)
 
   if ((count ?? 0) === 0) {
-    console.log('[fetchProjectsWithPackages] seeding default projects…')
-    const { error: seedErr } = await sb.from('projects').insert(SEED_PROJECTS)
-    if (seedErr) console.error('[fetchProjectsWithPackages] seed error:', seedErr.message)
-    else console.log('[fetchProjectsWithPackages] seeded', SEED_PROJECTS.length, 'projects')
+    await sb.from('projects').insert(SEED_PROJECTS)
   }
 
   const { data, error } = await sb
@@ -951,12 +941,8 @@ export async function fetchProjectsWithPackages() {
     .select('*, packages(*)')
     .order('name')
 
-  if (error) {
-    console.error('[fetchProjectsWithPackages] fetch error:', error.message)
-    throw new Error(error.message)
-  }
+  if (error) throw new Error(error.message)
 
-  console.log('[fetchProjectsWithPackages] returned', data?.length ?? 0, 'projects')
   return (data ?? []).map(mapDbProject)
 }
 

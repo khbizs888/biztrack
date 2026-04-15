@@ -68,13 +68,10 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo, selec
     if (!settingsOpen) return
     setSettingsLoading(true)
     setSettingsError(false)
-    console.log('[CustomerInsights] fetching projects + brand settings…')
     Promise.all([fetchProjects(), fetchBrandSettings()])
       .then(([projects, settings]) => {
-        console.log('[CustomerInsights] projects:', projects.length, 'brand settings:', settings.length)
         const rows: SettingRow[] = projects.map((p: { id: string; name: string }) => {
           const bs = settings.find(s => s.project_id === p.id)
-          console.log(`[CustomerInsights] ${p.name} → vip_spend=${bs?.vip_spend_threshold}, vip_orders=${bs?.vip_order_threshold}, retention=${bs?.retention_days}`)
           return {
             project_id: p.id,
             name: p.name,
