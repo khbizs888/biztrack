@@ -105,8 +105,9 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
   const [isAddingRemark, startAddingRemark] = useTransition()
 
   const receiptInputRef = useRef<HTMLInputElement>(null)
-  const [isUploading, setIsUploading] = useState(false)
-  const [isRemoving,  setIsRemoving]  = useState(false)
+  const [isUploading,  setIsUploading]  = useState(false)
+  const [isRemoving,   setIsRemoving]   = useState(false)
+  const [isExporting,  setIsExporting]  = useState(false)
 
   const { data: customer, isLoading } = useQuery<CustomerCRM | null>({
     queryKey: ['customer-crm', id],
@@ -282,30 +283,35 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
   }
 
   function handleExportCSV() {
-    if (!orders.length) { toast.error('No orders to export'); return }
-    const today = new Date().toISOString().split('T')[0]
-    const safeName = (customer?.name ?? 'customer').replace(/[^a-zA-Z0-9]/g, '')
+    if (!orders.length) { toast.info('No orders to export'); return }
+    setIsExporting(true)
+    try {
+      const today = new Date().toISOString().split('T')[0]
+      const safeName = (customer?.name ?? 'customer').replace(/[^a-zA-Z0-9]/g, '')
 
-    // Group by brand; export each brand as a separate file
-    const byBrand: Record<string, OrderWithDetails[]> = {}
-    for (const o of orders) {
-      const brand = (o.projects as any)?.code ?? 'Unknown'
-      if (!byBrand[brand]) byBrand[brand] = []
-      // Inject customer info (the orders query is customer-scoped, no customer join)
-      byBrand[brand].push({
-        ...(o as any),
-        customers: {
-          id,
-          name:        customer?.name ?? '',
-          phone:       customer?.phone ?? null,
-          address:     customer?.address ?? null,
-          receipt_url: customer?.receipt_url ?? null,
-        },
-      } as OrderWithDetails)
-    }
+      // Group by brand; export each brand as a separate file
+      const byBrand: Record<string, OrderWithDetails[]> = {}
+      for (const o of orders) {
+        const brand = (o.projects as any)?.code ?? 'Unknown'
+        if (!byBrand[brand]) byBrand[brand] = []
+        // Inject customer info (the orders query is customer-scoped, no customer join)
+        byBrand[brand].push({
+          ...(o as any),
+          customers: {
+            id,
+            name:        customer?.name ?? '',
+            phone:       customer?.phone ?? null,
+            address:     customer?.address ?? null,
+            receipt_url: customer?.receipt_url ?? null,
+          },
+        } as OrderWithDetails)
+      }
 
-    for (const [brand, brandOrders] of Object.entries(byBrand)) {
-      exportOrders(brandOrders, brand, `${brand}_${safeName}_${today}.csv`)
+      for (const [brand, brandOrders] of Object.entries(byBrand)) {
+        exportOrders(brandOrders, brand, `${brand}_${safeName}_${today}.csv`)
+      }
+    } finally {
+      setIsExporting(false)
     }
   }
 
@@ -336,9 +342,9 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
             </Button>
           </a>
         )}
-        <Button variant="outline" size="sm" onClick={handleExportCSV} disabled={!orders.length}>
-          <Download className="h-4 w-4 mr-1.5" />
-          Export CSV
+        <Button type="button" variant="outline" size="sm" onClick={() => handleExportCSV()} disabled={isExporting}>
+          <Download className={`h-4 w-4 mr-1.5 ${isExporting ? 'animate-pulse' : ''}`} />
+          {isExporting ? 'Exporting...' : 'Export CSV'}
         </Button>
         <Button variant="outline" size="sm" onClick={handleRefreshStats} disabled={isRefreshing}>
           <RefreshCw className={`h-4 w-4 mr-1.5 ${isRefreshing ? 'animate-spin' : ''}`} />

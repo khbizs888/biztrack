@@ -65,6 +65,14 @@ export default function SettingsPage() {
     })
   }, [])
 
+  // Cleanup any pointer-events/scroll lock left by shadcn Sheet/Dialog on unmount
+  useEffect(() => {
+    return () => {
+      document.body.style.pointerEvents = ''
+      document.body.removeAttribute('data-scroll-locked')
+    }
+  }, [])
+
   async function saveProfile() {
     setSavingProfile(true)
     const { error } = await supabase.auth.updateUser({ data: { full_name: displayName } })
