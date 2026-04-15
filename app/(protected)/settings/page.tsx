@@ -1,11 +1,8 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createClient } from '@/lib/supabase/client'
-import { passwordSchema, type PasswordFormData } from '@/lib/validations'
 import { fetchBrandSettings, saveBrandSetting } from '@/app/actions/brand-settings'
 import { useProjects } from '@/lib/hooks/useProjects'
 import PageHeader from '@/components/shared/PageHeader'
@@ -24,6 +21,12 @@ export default function SettingsPage() {
   const [savingProfile, setSavingProfile] = useState(false)
   const [displayName, setDisplayName] = useState('')
   const [savingBrand, setSavingBrand] = useState<string | null>(null)
+
+  // Password change — plain state, no react-hook-form
+  const [newPassword,    setNewPassword]    = useState('')
+  const [confirmPwd,     setConfirmPwd]     = useState('')
+  const [pwdError,       setPwdError]       = useState('')
+  const [changingPwd,    setChangingPwd]    = useState(false)
 
   const { projects } = useProjects()
   const { data: brandSettings = [] } = useQuery({
@@ -55,10 +58,6 @@ export default function SettingsPage() {
     }
   }, [brandSettings, projects])
 
-  const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<PasswordFormData>({
-    resolver: zodResolver(passwordSchema),
-  })
-
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
       setUser(user)
@@ -74,11 +73,17 @@ export default function SettingsPage() {
     setSavingProfile(false)
   }
 
-  async function changePassword(data: PasswordFormData) {
-    const { error } = await supabase.auth.updateUser({ password: data.password })
-    if (error) { toast.error(error.message); return }
+  async function changePassword() {
+    setPwdError('')
+    if (newPassword.length < 6) { setPwdError('Password must be at least 6 characters'); return }
+    if (newPassword !== confirmPwd) { setPwdError("Passwords don't match"); return }
+    setChangingPwd(true)
+    const { error } = await supabase.auth.updateUser({ password: newPassword })
+    if (error) { toast.error(error.message); setChangingPwd(false); return }
     toast.success('Password updated successfully')
-    reset()
+    setNewPassword('')
+    setConfirmPwd('')
+    setChangingPwd(false)
   }
 
   async function handleSaveBrandSetting(projectId: string) {
@@ -147,16 +152,25 @@ export default function SettingsPage() {
           <div className="space-y-4">
             <div className="space-y-1">
               <Label>New Password</Label>
-              <Input type="password" placeholder="••••••••" {...register('password')} />
-              {errors.password && <p className="text-xs text-destructive">{errors.password.message}</p>}
+              <Input
+                type="password"
+                placeholder="••••••••"
+                value={newPassword}
+                onChange={e => setNewPassword(e.target.value)}
+              />
             </div>
             <div className="space-y-1">
               <Label>Confirm Password</Label>
-              <Input type="password" placeholder="••••••••" {...register('confirmPassword')} />
-              {errors.confirmPassword && <p className="text-xs text-destructive">{errors.confirmPassword.message}</p>}
+              <Input
+                type="password"
+                placeholder="••••••••"
+                value={confirmPwd}
+                onChange={e => setConfirmPwd(e.target.value)}
+              />
             </div>
-            <Button type="button" size="sm" onClick={handleSubmit(changePassword)} disabled={isSubmitting}>
-              {isSubmitting ? 'Updating...' : 'Update Password'}
+            {pwdError && <p className="text-xs text-destructive">{pwdError}</p>}
+            <Button type="button" size="sm" onClick={changePassword} disabled={changingPwd}>
+              {changingPwd ? 'Updating...' : 'Update Password'}
             </Button>
           </div>
         </CardContent>
