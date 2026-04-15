@@ -290,14 +290,20 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
       const today = new Date().toISOString().split('T')[0]
       const safeName = (customer?.name ?? 'customer').replace(/[^a-zA-Z0-9]/g, '')
 
+      console.log('[EXPORT] orders from state:', orders?.length)
+      console.log('[EXPORT] customerId:', id)
+
       // Use cached orders; fall back to a fresh fetch if the query hasn't resolved yet
       let ordersToExport: typeof orders = orders
       if (!ordersToExport.length) {
-        const { data } = await supabase
+        const { data, error: fetchErr } = await supabase
           .from('orders')
           .select('id, order_date, created_at, total_price, status, payment_status, delivery_status, tracking_number, package_name, package_snapshot, channel, purchase_reason, remark, state, is_cod, projects(id, name, code)')
           .eq('customer_id', id)
           .order('order_date', { ascending: false })
+        console.log('[EXPORT] fallback fetch result:', data?.length ?? 0)
+        console.log('[EXPORT] fallback error:', fetchErr)
+        if (fetchErr) throw fetchErr
         ordersToExport = data ?? []
       }
 
