@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { Users, UserPlus, Star, Clock, Repeat2, X, Settings, ChevronDown, ChevronUp, Download } from 'lucide-react'
-import { exportCustomerInsights, type CustomerRow } from '@/lib/export-utils'
+import { exportCustomerInsights, exportSingleCustomer, type CustomerRow, type SingleCustomerData, type SingleCustomerOrder } from '@/lib/export-utils'
 import { toast } from 'sonner'
 import {
   PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -55,6 +55,7 @@ interface SettingRow {
 export default function CustomerInsightsTab({ projectId, dateFrom, dateTo, selectedBrand }: Props) {
   const [drillFilter,  setDrillFilter]  = useState<DrillFilter>('all')
   const [isExporting,  setIsExporting]  = useState(false)
+  const [exportingId,  setExportingId]  = useState<string | null>(null)
   const drillRef = useRef<HTMLDivElement>(null)
   const queryClient = useQueryClient()
 
@@ -124,7 +125,7 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo, selec
     queryFn: async () => {
       const sb = createClient()
       let q = sb.from('customers')
-        .select('id, name, phone, customer_tag, total_spent, total_orders, last_order_date, preferred_brand')
+        .select('id, name, phone, customer_tag, total_spent, total_orders, last_order_date, first_order_date, preferred_brand, preferred_platform')
 
       if (selectedBrand) q = q.eq('preferred_brand', selectedBrand)
 
@@ -171,6 +172,24 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo, selec
       toast.error(e.message ?? 'Export failed')
     } finally {
       setIsExporting(false)
+    }
+  }
+
+  async function handleExportSingleCustomer(customer: SingleCustomerData) {
+    setExportingId(customer.id)
+    try {
+      const sb = createClient()
+      const { data: orders, error } = await sb
+        .from('orders')
+        .select('id, tracking_number, order_date, package_snapshot, package_name, channel, total_price, payment_status, is_cod, delivery_status, status, state, purchase_reason, remark')
+        .eq('customer_id', customer.id)
+        .order('order_date', { ascending: false })
+      if (error) throw error
+      exportSingleCustomer(customer, (orders ?? []) as SingleCustomerOrder[])
+    } catch (e: any) {
+      toast.error(e.message ?? 'Export failed')
+    } finally {
+      setExportingId(null)
     }
   }
 
@@ -537,14 +556,11 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo, selec
                         <th className="px-3 py-2 text-right font-medium text-muted-foreground">Spent</th>
                         <th className="px-3 py-2 text-left font-medium text-muted-foreground">Last Order</th>
                         <th className="px-3 py-2 text-center font-medium text-muted-foreground">Days Ago</th>
+                        <th className="px-3 py-2 w-8" />
                       </tr>
                     </thead>
                     <tbody>
-                      {drillCustomers.map((c: {
-                        id: string; name: string; phone: string; customer_tag: string;
-                        total_spent: number; total_orders: number; last_order_date: string | null;
-                        preferred_brand: string | null
-                      }) => {
+                      {drillCustomers.map((c: SingleCustomerData & { customer_tag: string }) => {
                         const days = c.last_order_date
                           ? differenceInDays(new Date(), new Date(c.last_order_date + 'T12:00:00'))
                           : null
@@ -559,9 +575,19 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo, selec
                               <span className={`px-1.5 py-0.5 rounded-full border font-medium ${TAG_BADGE[c.customer_tag] ?? TAG_BADGE.Unknown}`}>{c.customer_tag}</span>
                             </td>
                             <td className="px-3 py-2 text-right font-semibold">{c.total_orders}</td>
-                            <td className="px-3 py-2 text-right">{formatCurrency(c.total_spent)}</td>
+                            <td className="px-3 py-2 text-right">{formatCurrency(Number(c.total_spent))}</td>
                             <td className="px-3 py-2 text-muted-foreground">{c.last_order_date ? formatDate(c.last_order_date) : '—'}</td>
                             <td className={`px-3 py-2 text-center ${daysColor}`}>{days ?? '—'}</td>
+                            <td className="px-3 py-2">
+                              <button
+                                title="Export customer"
+                                onClick={() => handleExportSingleCustomer(c)}
+                                disabled={exportingId === c.id}
+                                className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors disabled:opacity-40"
+                              >
+                                <Download className={`h-3.5 w-3.5 ${exportingId === c.id ? 'animate-pulse' : ''}`} />
+                              </button>
+                            </td>
                           </tr>
                         )
                       })}
