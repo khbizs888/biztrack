@@ -65,40 +65,19 @@ export default function SettingsPage() {
     })
   }, [])
 
-  // Diagnostic + full cleanup: scrub any body/root state left by Radix Dialog/Sheet
-  // on any previously-visited page. This runs on settings MOUNT (diagnostic) and
-  // on UNMOUNT (cleanup), covering both directions of the bug.
+  // Cleanup Radix body locks on unmount — now also handled globally by
+  // DialogArtifactCleaner in layout, but kept here as a local safety net.
   useEffect(() => {
-    console.log('[SETTINGS MOUNT] body pointer-events:', document.body.style.pointerEvents,
-      '| overflow:', document.body.style.overflow,
-      '| aria-hidden:', document.body.getAttribute('aria-hidden'))
     return () => {
-      console.log('[SETTINGS UNMOUNT] body pointer-events:', document.body.style.pointerEvents)
       document.body.style.pointerEvents = ''
       document.body.style.overflow = ''
       document.body.removeAttribute('data-scroll-locked')
       document.body.removeAttribute('aria-hidden')
-      const root = document.getElementById('__next') ??
-                   document.querySelector('[data-nextjs-scroll-focus-boundary]')
+      const root = document.getElementById('__next')
       if (root) {
         root.removeAttribute('aria-hidden')
         root.removeAttribute('inert')
       }
-    }
-  }, [])
-
-  // Scrub stale Radix body locks on settings MOUNT too — visiting settings after
-  // closing a dialog on another page without unmounting shouldn't leave body locked.
-  useEffect(() => {
-    document.body.style.pointerEvents = ''
-    document.body.style.overflow = ''
-    document.body.removeAttribute('data-scroll-locked')
-    document.body.removeAttribute('aria-hidden')
-    const root = document.getElementById('__next') ??
-                 document.querySelector('[data-nextjs-scroll-focus-boundary]')
-    if (root) {
-      root.removeAttribute('aria-hidden')
-      root.removeAttribute('inert')
     }
   }, [])
 

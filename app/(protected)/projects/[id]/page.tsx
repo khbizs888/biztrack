@@ -6,6 +6,7 @@ import { useProjects } from '@/lib/hooks/useProjects'
 import type { CustomField, Package } from '@/lib/hooks/useProjects'
 import PageHeader from '@/components/shared/PageHeader'
 import AddPackageModal from '@/components/modules/projects/AddPackageModal'
+import { useCleanupDialogArtifacts } from '@/lib/hooks/use-cleanup-dialog-artifacts'
 import EditPackageModal from '@/components/modules/projects/EditPackageModal'
 import ImportPackagesCSVModal from '@/components/modules/projects/ImportPackagesCSVModal'
 import { Button } from '@/components/ui/button'
@@ -42,6 +43,7 @@ function toSnakeCase(s: string): string {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ProjectDetailPage({ params }: { params: { id: string } }) {
+  useCleanupDialogArtifacts()
   const { id } = params
   const router = useRouter()
   const {

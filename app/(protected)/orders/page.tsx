@@ -15,6 +15,7 @@ import { formatCurrency, formatDate } from '@/lib/utils'
 import { Plus, ShoppingCart, Download, FileUp, History, Calendar, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-react'
 import type { OrderFilters, Order } from '@/lib/types'
 import { exportOrders } from '@/lib/export-utils'
+import { useCleanupDialogArtifacts } from '@/lib/hooks/use-cleanup-dialog-artifacts'
 import AddOrderModal from '@/components/modules/orders/AddOrderModal'
 import ImportOrdersModal from '@/components/modules/orders/ImportOrdersModal'
 import OrderActions from '@/components/modules/orders/OrderActions'
@@ -109,6 +110,7 @@ function TableHeaders({ showDate = false }: { showDate?: boolean }) {
 }
 
 export default function OrdersPage() {
+  useCleanupDialogArtifacts()
   const today = getToday()
   const thisWeek = getThisWeek()
 

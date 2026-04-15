@@ -6,6 +6,7 @@ import PageHeader from '@/components/shared/PageHeader'
 import LoadingState from '@/components/shared/LoadingState'
 import EmptyState from '@/components/shared/EmptyState'
 import ProductModal from '@/components/modules/products/ProductModal'
+import { useCleanupDialogArtifacts } from '@/lib/hooks/use-cleanup-dialog-artifacts'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -25,6 +26,7 @@ const STATUS_COLORS: Record<string, string> = {
 }
 
 export default function ProductsPage() {
+  useCleanupDialogArtifacts()
   const [products, setProducts]   = useState<any[]>([])
   const [projects, setProjects]   = useState<any[]>([])
   const [loading, setLoading]     = useState(true)

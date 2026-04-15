@@ -198,7 +198,6 @@ export default function Sidebar() {
                           key={child.href}
                           href={child.href}
                           className={cn(childBase, childActive ? itemActive : itemInactive)}
-                          onClick={() => console.log('[NAV CLICKED]', child.href)}
                         >
                           <span className="text-xs font-mono opacity-40">–</span>
                           {child.label}
@@ -221,7 +220,6 @@ export default function Sidebar() {
               href={item.href!}
               title={collapsed ? item.label : undefined}
               className={cn(itemBase, isActive ? itemActive : itemInactive)}
-              onClick={() => console.log('[NAV CLICKED]', item.href)}
             >
               <item.icon className="h-4 w-4 shrink-0" />
               {!collapsed && <span>{item.label}</span>}

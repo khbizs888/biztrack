@@ -25,6 +25,7 @@ import { differenceInDays, subDays, format } from 'date-fns'
 import { toast } from 'sonner'
 import type { CustomerCRM, CustomerTag } from '@/lib/types'
 import { cn } from '@/lib/utils'
+import { useCleanupDialogArtifacts } from '@/lib/hooks/use-cleanup-dialog-artifacts'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -79,6 +80,7 @@ function SortTh({ label, col, active, dir, onSort }: {
 // ─── Main content (needs useSearchParams → wrapped in Suspense) ───────────────
 
 function CustomersContent() {
+  useCleanupDialogArtifacts()
   const router      = useRouter()
   const params      = useSearchParams()
   const queryClient = useQueryClient()

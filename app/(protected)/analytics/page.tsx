@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useCleanupDialogArtifacts } from '@/lib/hooks/use-cleanup-dialog-artifacts'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -33,6 +34,7 @@ const QUICK_RANGES = [
 ]
 
 export default function AnalyticsPage() {
+  useCleanupDialogArtifacts()
   const supabase = createClient()
 
   const today = new Date()

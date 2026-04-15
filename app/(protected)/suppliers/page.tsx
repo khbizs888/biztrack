@@ -6,6 +6,7 @@ import PageHeader from '@/components/shared/PageHeader'
 import LoadingState from '@/components/shared/LoadingState'
 import EmptyState from '@/components/shared/EmptyState'
 import SupplierModal from '@/components/modules/suppliers/SupplierModal'
+import { useCleanupDialogArtifacts } from '@/lib/hooks/use-cleanup-dialog-artifacts'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -14,6 +15,7 @@ import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 
 export default function SuppliersPage() {
+  useCleanupDialogArtifacts()
   const [suppliers, setSuppliers] = useState<any[]>([])
   const [loading, setLoading]     = useState(true)
   const [search, setSearch]       = useState('')

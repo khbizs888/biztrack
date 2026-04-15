@@ -5,12 +5,14 @@ import { useRouter } from 'next/navigation'
 import { useProjects } from '@/lib/hooks/useProjects'
 import PageHeader from '@/components/shared/PageHeader'
 import AddProjectModal from '@/components/modules/projects/AddProjectModal'
+import { useCleanupDialogArtifacts } from '@/lib/hooks/use-cleanup-dialog-artifacts'
 import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { Plus, FolderKanban, ArrowRight } from 'lucide-react'
 
 export default function ProjectsPage() {
+  useCleanupDialogArtifacts()
   const router = useRouter()
   const { projects, ready, addProject } = useProjects()
   const [showModal, setShowModal] = useState(false)

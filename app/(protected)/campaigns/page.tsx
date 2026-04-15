@@ -6,6 +6,7 @@ import PageHeader from '@/components/shared/PageHeader'
 import LoadingState from '@/components/shared/LoadingState'
 import EmptyState from '@/components/shared/EmptyState'
 import CampaignModal from '@/components/modules/campaigns/CampaignModal'
+import { useCleanupDialogArtifacts } from '@/lib/hooks/use-cleanup-dialog-artifacts'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -27,6 +28,7 @@ const STATUS_COLORS: Record<string, string> = {
 }
 
 export default function CampaignsPage() {
+  useCleanupDialogArtifacts()
   const [campaigns, setCampaigns] = useState<any[]>([])
   const [loading, setLoading]     = useState(true)
   const [brand, setBrand]         = useState('all')

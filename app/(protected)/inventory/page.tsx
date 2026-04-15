@@ -6,6 +6,7 @@ import PageHeader from '@/components/shared/PageHeader'
 import LoadingState from '@/components/shared/LoadingState'
 import EmptyState from '@/components/shared/EmptyState'
 import StockMovementModal from '@/components/modules/inventory/StockMovementModal'
+import { useCleanupDialogArtifacts } from '@/lib/hooks/use-cleanup-dialog-artifacts'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -32,6 +33,7 @@ interface ModalState {
 }
 
 export default function InventoryPage() {
+  useCleanupDialogArtifacts()
   const [rows, setRows]       = useState<StockRow[]>([])
   const [loading, setLoading] = useState(true)
   const [brand, setBrand]     = useState('all')

@@ -9,6 +9,7 @@ import {
 } from '@/app/actions/customer-crm'
 import { uploadCustomerReceipt, removeCustomerReceipt } from '@/app/actions/customers'
 import { exportOrders, type OrderWithDetails } from '@/lib/export-utils'
+import { useCleanupDialogArtifacts } from '@/lib/hooks/use-cleanup-dialog-artifacts'
 import PageHeader from '@/components/shared/PageHeader'
 import { LoadingSpinner } from '@/components/shared/LoadingState'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -86,6 +87,7 @@ function BrandBadge({ brand }: { brand: string | null }) {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function CustomerDetailPage({ params }: { params: { id: string } }) {
+  useCleanupDialogArtifacts()
   const { id } = params
   const supabase    = createClient()
   const queryClient = useQueryClient()
