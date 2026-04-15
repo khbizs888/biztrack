@@ -10,7 +10,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { formatCurrency, formatDate } from '@/lib/utils'
-import { Users, UserPlus, Star, Clock, Repeat2, X, Settings, ChevronDown, ChevronUp } from 'lucide-react'
+import { Users, UserPlus, Star, Clock, Repeat2, X, Settings, ChevronDown, ChevronUp, Download } from 'lucide-react'
+import { exportCustomerInsights, type CustomerRow } from '@/lib/export-utils'
 import { toast } from 'sonner'
 import {
   PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -52,7 +53,8 @@ interface SettingRow {
 }
 
 export default function CustomerInsightsTab({ projectId, dateFrom, dateTo, selectedBrand }: Props) {
-  const [drillFilter, setDrillFilter] = useState<DrillFilter>('all')
+  const [drillFilter,  setDrillFilter]  = useState<DrillFilter>('all')
+  const [isExporting,  setIsExporting]  = useState(false)
   const drillRef = useRef<HTMLDivElement>(null)
   const queryClient = useQueryClient()
 
@@ -154,6 +156,27 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo, selec
     }
   }
 
+  async function handleExportCustomers() {
+    setIsExporting(true)
+    try {
+      const sb = createClient()
+      let q = sb
+        .from('customers')
+        .select('id, name, phone, preferred_brand, customer_tag, total_orders, total_spent, last_order_date, first_order_date')
+        .order('total_spent', { ascending: false })
+
+      if (selectedBrand) q = (q as any).eq('preferred_brand', selectedBrand)
+
+      const { data: rows, error } = await q
+      if (error) throw error
+      exportCustomerInsights((rows ?? []) as CustomerRow[], selectedBrand ?? 'all')
+    } catch (e: any) {
+      toast.error(e.message ?? 'Export failed')
+    } finally {
+      setIsExporting(false)
+    }
+  }
+
   if (isLoading) {
     return (
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
@@ -184,18 +207,33 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo, selec
 
   return (
     <div className="space-y-6">
-      {/* VIP & Retention Settings Panel */}
+      {/* VIP & Retention Settings Panel + Export button */}
       <div className="rounded-lg border bg-card">
-        <button
-          onClick={() => setSettingsOpen(v => !v)}
-          className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium hover:bg-muted/50 transition-colors rounded-lg"
-        >
-          <span className="flex items-center gap-2 text-muted-foreground">
-            <Settings className="h-4 w-4" />
-            Configure VIP &amp; Retention Settings
-          </span>
-          {settingsOpen ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
-        </button>
+        <div className="flex items-center">
+          <button
+            onClick={() => setSettingsOpen(v => !v)}
+            className="flex flex-1 items-center justify-between px-4 py-3 text-sm font-medium hover:bg-muted/50 transition-colors rounded-l-lg"
+          >
+            <span className="flex items-center gap-2 text-muted-foreground">
+              <Settings className="h-4 w-4" />
+              Configure VIP &amp; Retention Settings
+            </span>
+            {settingsOpen ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+          </button>
+          <div className="px-3 border-l">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={handleExportCustomers}
+              disabled={isExporting}
+              className="h-8 gap-1.5"
+            >
+              <Download className={`h-3.5 w-3.5 ${isExporting ? 'animate-pulse' : ''}`} />
+              {isExporting ? 'Exporting…' : 'Export Customers'}
+            </Button>
+          </div>
+        </div>
         {settingsOpen && (
           <div className="border-t px-4 py-3">
             {settingsError ? (

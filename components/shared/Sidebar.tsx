@@ -9,8 +9,8 @@ import { toast } from 'sonner'
 import {
   LayoutDashboard, ShoppingCart, BarChart2,
   FolderKanban, Settings, LogOut, Leaf, ChevronDown, ChevronRight,
-  PanelLeftClose, PanelLeft, Target, UserCog, Megaphone,
-  Package, DollarSign, TrendingUp, Truck, Warehouse,
+  PanelLeftClose, PanelLeft, Megaphone,
+  Package, DollarSign,
 } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
@@ -34,7 +34,6 @@ const NAV: NavGroup[] = [
       { label: 'Import History', href: '/orders/import-history' },
     ],
   },
-  // Analytics is now a single page covering Sales, Ads, Customers, and Goals
   { label: 'Analytics', icon: BarChart2, href: '/analytics' },
   {
     label: 'Finance', icon: DollarSign,
@@ -57,32 +56,41 @@ const NAV: NavGroup[] = [
 ]
 
 // ---------------------------------------------------------------------------
+// Helpers — safe localStorage reads that work during SSR
+// ---------------------------------------------------------------------------
+
+function readCollapsed(): boolean {
+  try { return localStorage.getItem('sidebar_collapsed') === 'true' } catch { return false }
+}
+
+function initialOpenGroups(pathname: string): Set<string> {
+  const auto = new Set<string>()
+  NAV.forEach(item => {
+    if (item.children?.some(c => pathname.startsWith(c.href))) auto.add(item.label)
+  })
+  return auto
+}
+
+// ---------------------------------------------------------------------------
 // Sidebar uses CSS variables set by applyTheme() so every theme is reflected
 // automatically. Variables: --sidebar-bg, --sidebar-border, --sidebar-text,
 // --sidebar-active-bg, --sidebar-active-text, --sidebar-hover-bg
 // ---------------------------------------------------------------------------
 
 export default function Sidebar() {
-  const pathname  = usePathname()
-  const router    = useRouter()
-  const supabase  = createClient()
+  const pathname = usePathname()
+  const router   = useRouter()
+  const supabase = createClient()
 
-  const [collapsed,   setCollapsed]   = useState(false)
-  const [openGroups,  setOpenGroups]  = useState<Set<string>>(new Set())
-  const [mounted,     setMounted]     = useState(false)
+  // Lazy initializers so the sidebar ALWAYS renders immediately — no null flash
+  // that could cause React to drop click events during re-hydration.
+  const [collapsed,  setCollapsed]  = useState(readCollapsed)
+  const [openGroups, setOpenGroups] = useState(() => initialOpenGroups(pathname))
 
+  // Sync collapsed state from localStorage after hydration (handles SSR mismatch)
   useEffect(() => {
     const saved = localStorage.getItem('sidebar_collapsed')
-    if (saved === 'true') setCollapsed(true)
-
-    // Auto-expand the group containing the active page
-    const auto = new Set<string>()
-    NAV.forEach(item => {
-      if (item.children?.some(c => pathname.startsWith(c.href))) auto.add(item.label)
-    })
-    setOpenGroups(auto)
-    setMounted(true)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (saved !== null) setCollapsed(saved === 'true')
   }, [])
 
   function toggleCollapsed() {
@@ -114,13 +122,11 @@ export default function Sidebar() {
     router.refresh()
   }
 
-  if (!mounted) return null
-
   // Shared class fragments referencing CSS vars set by applyTheme()
-  const itemBase    = 'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors'
-  const itemActive  = 'bg-[var(--sidebar-active-bg)] text-[var(--sidebar-active-text)]'
-  const itemInactive= 'text-[var(--sidebar-text)] hover:bg-[var(--sidebar-hover-bg)]'
-  const childBase   = 'flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors'
+  const itemBase     = 'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors'
+  const itemActive   = 'bg-[var(--sidebar-active-bg)] text-[var(--sidebar-active-text)]'
+  const itemInactive = 'text-[var(--sidebar-text)] hover:bg-[var(--sidebar-hover-bg)]'
+  const childBase    = 'flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition-colors'
 
   return (
     <aside
