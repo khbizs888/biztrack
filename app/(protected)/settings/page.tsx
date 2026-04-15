@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useState, useEffect, useTransition } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { fetchBrandSettings, saveBrandSetting } from '@/app/actions/brand-settings'
+import type { BrandSetting } from '@/app/actions/brand-settings'
 import { useProjects } from '@/lib/hooks/useProjects'
 import PageHeader from '@/components/shared/PageHeader'
 import ThemeCustomizer from '@/components/shared/ThemeCustomizer'
@@ -16,7 +16,6 @@ import type { User } from '@supabase/supabase-js'
 
 export default function SettingsPage() {
   const supabase = createClient()
-  const queryClient = useQueryClient()
   const [user, setUser] = useState<User | null>(null)
   const [savingProfile, setSavingProfile] = useState(false)
   const [displayName, setDisplayName] = useState('')
@@ -29,10 +28,22 @@ export default function SettingsPage() {
   const [changingPwd,    setChangingPwd]    = useState(false)
 
   const { projects } = useProjects()
-  const { data: brandSettings = [] } = useQuery({
-    queryKey: ['brand-settings'],
-    queryFn: fetchBrandSettings,
-  })
+
+  // Fetch brand settings via startTransition so the in-flight server-action
+  // POST does not block client-side navigation while the data loads.
+  const [brandSettings, setBrandSettings] = useState<BrandSetting[]>([])
+  const [, startBrandFetch] = useTransition()
+
+  function refreshBrandSettings() {
+    startBrandFetch(async () => {
+      try {
+        const data = await fetchBrandSettings()
+        setBrandSettings(data)
+      } catch {}
+    })
+  }
+
+  useEffect(() => { refreshBrandSettings() }, [])
 
   // Local editable state for brand settings
   const [brandEdits, setBrandEdits] = useState<Record<string, {
@@ -114,7 +125,7 @@ export default function SettingsPage() {
         inactive_days: parseInt(edit.inactive_days, 10) || 365,
       })
       toast.success('Brand settings saved')
-      queryClient.invalidateQueries({ queryKey: ['brand-settings'] })
+      refreshBrandSettings()
     } catch (e: any) {
       toast.error(e.message ?? 'Failed to save')
     } finally {
