@@ -8,7 +8,7 @@ import {
   changeCustomerTag, addCustomerRemark, fetchCustomerRemarks,
 } from '@/app/actions/customer-crm'
 import { uploadCustomerReceipt, removeCustomerReceipt } from '@/app/actions/customers'
-import { exportOrders, type OrderWithDetails } from '@/lib/export-utils'
+import { exportOrders, exportSingleCustomer, type OrderWithDetails, type SingleCustomerData } from '@/lib/export-utils'
 import { useCleanupDialogArtifacts } from '@/lib/hooks/use-cleanup-dialog-artifacts'
 import PageHeader from '@/components/shared/PageHeader'
 import { LoadingSpinner } from '@/components/shared/LoadingState'
@@ -138,7 +138,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
     queryFn: async () => {
       const { data } = await supabase
         .from('orders')
-        .select('id, order_date, created_at, total_price, status, payment_status, delivery_status, tracking_number, package_name, package_snapshot, channel, purchase_reason, notes, state, is_cod, projects(id, name, code)')
+        .select('id, order_date, created_at, total_price, status, payment_status, delivery_status, tracking_number, package_name, package_snapshot, channel, purchase_reason, state, is_cod, projects(id, name, code)')
         .eq('customer_id', id)
         .order('order_date', { ascending: false })
       return data ?? []
@@ -298,7 +298,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
       if (!ordersToExport.length) {
         const { data, error: fetchErr } = await supabase
           .from('orders')
-          .select('id, order_date, created_at, total_price, status, payment_status, delivery_status, tracking_number, package_name, package_snapshot, channel, purchase_reason, notes, state, is_cod, projects(id, name, code)')
+          .select('id, order_date, created_at, total_price, status, payment_status, delivery_status, tracking_number, package_name, package_snapshot, channel, purchase_reason, state, is_cod, projects(id, name, code)')
           .eq('customer_id', id)
           .order('order_date', { ascending: false })
         console.log('[EXPORT] fallback fetch result:', data?.length ?? 0)
@@ -307,14 +307,29 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
         ordersToExport = data ?? []
       }
 
-      if (!ordersToExport.length) {
-        toast.info('No orders to export')
+      const finalOrders = ordersToExport ?? []
+
+      // If no orders, export a profile-only workbook via exportSingleCustomer
+      if (!finalOrders.length) {
+        const profileData: SingleCustomerData = {
+          id,
+          name:              customer?.name ?? '',
+          phone:             customer?.phone ?? null,
+          preferred_brand:   customer?.preferred_brand ?? null,
+          preferred_platform: customer?.preferred_platform ?? null,
+          customer_tag:      customer?.customer_tag ?? null,
+          total_orders:      0,
+          total_spent:       0,
+          last_order_date:   null,
+          first_order_date:  null,
+        }
+        exportSingleCustomer(profileData, [])
         return
       }
 
       // Group by brand; export each brand as a separate .xlsx file
       const byBrand: Record<string, OrderWithDetails[]> = {}
-      for (const o of ordersToExport) {
+      for (const o of finalOrders) {
         const brand = (o.projects as any)?.code ?? 'Unknown'
         if (!byBrand[brand]) byBrand[brand] = []
         byBrand[brand].push({
