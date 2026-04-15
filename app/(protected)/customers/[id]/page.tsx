@@ -284,19 +284,33 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
     }
   }
 
-  function handleExportCSV() {
-    if (!orders.length) { toast.info('No orders to export'); return }
+  async function handleExportCSV() {
     setIsExporting(true)
     try {
       const today = new Date().toISOString().split('T')[0]
       const safeName = (customer?.name ?? 'customer').replace(/[^a-zA-Z0-9]/g, '')
 
-      // Group by brand; export each brand as a separate file
+      // Use cached orders; fall back to a fresh fetch if the query hasn't resolved yet
+      let ordersToExport: typeof orders = orders
+      if (!ordersToExport.length) {
+        const { data } = await supabase
+          .from('orders')
+          .select('id, order_date, created_at, total_price, status, payment_status, delivery_status, tracking_number, package_name, package_snapshot, channel, purchase_reason, remark, state, is_cod, projects(id, name, code)')
+          .eq('customer_id', id)
+          .order('order_date', { ascending: false })
+        ordersToExport = data ?? []
+      }
+
+      if (!ordersToExport.length) {
+        toast.info('No orders to export')
+        return
+      }
+
+      // Group by brand; export each brand as a separate .xlsx file
       const byBrand: Record<string, OrderWithDetails[]> = {}
-      for (const o of orders) {
+      for (const o of ordersToExport) {
         const brand = (o.projects as any)?.code ?? 'Unknown'
         if (!byBrand[brand]) byBrand[brand] = []
-        // Inject customer info (the orders query is customer-scoped, no customer join)
         byBrand[brand].push({
           ...(o as any),
           customers: {
@@ -310,8 +324,10 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
       }
 
       for (const [brand, brandOrders] of Object.entries(byBrand)) {
-        exportOrders(brandOrders, brand, `${brand}_${safeName}_${today}.csv`)
+        exportOrders(brandOrders, brand, `${brand}_${safeName}_${today}.xlsx`)
       }
+    } catch (e: any) {
+      toast.error(e.message ?? 'Export failed')
     } finally {
       setIsExporting(false)
     }
