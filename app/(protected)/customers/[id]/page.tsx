@@ -138,7 +138,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
     queryFn: async () => {
       const { data } = await supabase
         .from('orders')
-        .select('id, order_date, created_at, total_price, status, payment_status, delivery_status, tracking_number, package_name, package_snapshot, channel, purchase_reason, remark, state, is_cod, projects(id, name, code)')
+        .select('id, order_date, created_at, total_price, status, payment_status, delivery_status, tracking_number, package_name, package_snapshot, channel, purchase_reason, notes, state, is_cod, projects(id, name, code)')
         .eq('customer_id', id)
         .order('order_date', { ascending: false })
       return data ?? []
@@ -298,7 +298,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
       if (!ordersToExport.length) {
         const { data, error: fetchErr } = await supabase
           .from('orders')
-          .select('id, order_date, created_at, total_price, status, payment_status, delivery_status, tracking_number, package_name, package_snapshot, channel, purchase_reason, remark, state, is_cod, projects(id, name, code)')
+          .select('id, order_date, created_at, total_price, status, payment_status, delivery_status, tracking_number, package_name, package_snapshot, channel, purchase_reason, notes, state, is_cod, projects(id, name, code)')
           .eq('customer_id', id)
           .order('order_date', { ascending: false })
         console.log('[EXPORT] fallback fetch result:', data?.length ?? 0)

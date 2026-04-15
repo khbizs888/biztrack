@@ -181,7 +181,7 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo, selec
       const sb = createClient()
       const { data: orders, error } = await sb
         .from('orders')
-        .select('id, tracking_number, order_date, package_snapshot, package_name, channel, total_price, payment_status, is_cod, delivery_status, status, state, purchase_reason, remark')
+        .select('id, tracking_number, order_date, package_snapshot, package_name, channel, total_price, payment_status, is_cod, delivery_status, status, state, purchase_reason, notes')
         .eq('customer_id', customer.id)
         .order('order_date', { ascending: false })
       if (error) throw error

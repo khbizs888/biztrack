@@ -32,7 +32,7 @@ function todayStr(): string {
 }
 
 function getOrderNotes(order: Order): string {
-  return (order as any).remark ?? order.purchase_reason ?? ''
+  return (order as any).notes ?? order.purchase_reason ?? ''
 }
 
 /** Auto-fit column widths from an array of character-width hints. */
@@ -215,7 +215,7 @@ export interface SingleCustomerOrder {
   status: string
   state: string | null
   purchase_reason: string | null
-  remark?: string | null
+  notes?: string | null
 }
 
 export function exportSingleCustomer(
@@ -280,7 +280,7 @@ export function exportSingleCustomer(
     'Payment':         o.is_cod ? 'COD' : (o.payment_status ?? 'Bank Transfer'),
     'Delivery':        o.delivery_status ?? o.status ?? '',
     'State':           o.state ?? '',
-    'Notes':           (o as any).remark ?? o.purchase_reason ?? '',
+    'Notes':           o.notes ?? o.purchase_reason ?? '',
   }))
 
   const ws2 = orderRows.length > 0
