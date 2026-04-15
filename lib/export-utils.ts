@@ -43,7 +43,7 @@ function todayStr(): string {
 
 // ─── Format A: KHH & FIOR ─────────────────────────────────────────────────────
 
-export function exportKHHFIOR(orders: OrderWithDetails[], brand: string): void {
+export function exportKHHFIOR(orders: OrderWithDetails[], brand: string, filename?: string): void {
   const headers = [
     '线上单号', '店铺', '付款时间', '买家ID', '收件人姓名', '收件人手机号吗',
     '收件人电子邮箱', '收件人地址 1', '收件人地址2', '收件人区/县', '收件人城市',
@@ -91,12 +91,12 @@ export function exportKHHFIOR(orders: OrderWithDetails[], brand: string): void {
   })
 
   const csv = [csvRow(headers), ...rows].join('\n')
-  downloadCSV(csv, `${brand}_orders_${todayStr()}.csv`)
+  downloadCSV(csv, filename ?? `${brand}_orders_${todayStr()}.csv`)
 }
 
 // ─── Format B: DD, NE, Juji ───────────────────────────────────────────────────
 
-export function exportDDNEJuji(orders: OrderWithDetails[], brand: string): void {
+export function exportDDNEJuji(orders: OrderWithDetails[], brand: string, filename?: string): void {
   const headers = [
     'Order No', 'Project', 'Shopee Order No', 'Unique Id', 'Order Date',
     'Receiver Name', 'Full Phone No', 'Address Line 1', 'Postal Code', 'City', 'State',
@@ -127,17 +127,17 @@ export function exportDDNEJuji(orders: OrderWithDetails[], brand: string): void 
   })
 
   const csv = [csvRow(headers), ...rows].join('\n')
-  downloadCSV(csv, `${brand}_orders_${todayStr()}.csv`)
+  downloadCSV(csv, filename ?? `${brand}_orders_${todayStr()}.csv`)
 }
 
 // ─── Dispatcher ───────────────────────────────────────────────────────────────
 
 const KHH_FIOR_BRANDS = ['KHH', 'FIOR']
 
-export function exportOrders(orders: OrderWithDetails[], brand: string): void {
+export function exportOrders(orders: OrderWithDetails[], brand: string, filename?: string): void {
   if (KHH_FIOR_BRANDS.includes(brand)) {
-    exportKHHFIOR(orders, brand)
+    exportKHHFIOR(orders, brand, filename)
   } else {
-    exportDDNEJuji(orders, brand)
+    exportDDNEJuji(orders, brand, filename)
   }
 }

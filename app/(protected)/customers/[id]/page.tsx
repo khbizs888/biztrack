@@ -8,6 +8,7 @@ import {
   changeCustomerTag, addCustomerRemark, fetchCustomerRemarks,
 } from '@/app/actions/customer-crm'
 import { uploadCustomerReceipt, removeCustomerReceipt } from '@/app/actions/customers'
+import { exportOrders, type OrderWithDetails } from '@/lib/export-utils'
 import PageHeader from '@/components/shared/PageHeader'
 import { LoadingSpinner } from '@/components/shared/LoadingState'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -20,7 +21,7 @@ import { BRAND_COLORS } from '@/lib/constants'
 import {
   MessageCircle, Crown, RefreshCw, Bell, TrendingDown, ShoppingCart,
   DollarSign, TrendingUp, Calendar, UserCheck, Phone, StickyNote,
-  BarChart3, Tag, Send, Clock, ImageIcon, Upload, Trash2,
+  BarChart3, Tag, Send, Clock, ImageIcon, Upload, Trash2, Download,
 } from 'lucide-react'
 import { format, differenceInDays } from 'date-fns'
 import { toast } from 'sonner'
@@ -134,7 +135,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
     queryFn: async () => {
       const { data } = await supabase
         .from('orders')
-        .select('id, order_date, created_at, total_price, status, payment_status, tracking_number, package_name, package_snapshot, projects(code), is_cod')
+        .select('id, order_date, created_at, total_price, status, payment_status, delivery_status, tracking_number, package_name, package_snapshot, channel, purchase_reason, remark, state, is_cod, projects(id, name, code)')
         .eq('customer_id', id)
         .order('order_date', { ascending: false })
       return data ?? []
@@ -280,6 +281,34 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
     }
   }
 
+  function handleExportCSV() {
+    if (!orders.length) { toast.error('No orders to export'); return }
+    const today = new Date().toISOString().split('T')[0]
+    const safeName = (customer?.name ?? 'customer').replace(/[^a-zA-Z0-9]/g, '')
+
+    // Group by brand; export each brand as a separate file
+    const byBrand: Record<string, OrderWithDetails[]> = {}
+    for (const o of orders) {
+      const brand = (o.projects as any)?.code ?? 'Unknown'
+      if (!byBrand[brand]) byBrand[brand] = []
+      // Inject customer info (the orders query is customer-scoped, no customer join)
+      byBrand[brand].push({
+        ...(o as any),
+        customers: {
+          id,
+          name:        customer?.name ?? '',
+          phone:       customer?.phone ?? null,
+          address:     customer?.address ?? null,
+          receipt_url: customer?.receipt_url ?? null,
+        },
+      } as OrderWithDetails)
+    }
+
+    for (const [brand, brandOrders] of Object.entries(byBrand)) {
+      exportOrders(brandOrders, brand, `${brand}_${safeName}_${today}.csv`)
+    }
+  }
+
   if (isLoading) return <LoadingSpinner />
   if (!customer) return <p className="text-muted-foreground">Customer not found.</p>
 
@@ -307,6 +336,10 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
             </Button>
           </a>
         )}
+        <Button variant="outline" size="sm" onClick={handleExportCSV} disabled={!orders.length}>
+          <Download className="h-4 w-4 mr-1.5" />
+          Export CSV
+        </Button>
         <Button variant="outline" size="sm" onClick={handleRefreshStats} disabled={isRefreshing}>
           <RefreshCw className={`h-4 w-4 mr-1.5 ${isRefreshing ? 'animate-spin' : ''}`} />
           Refresh
