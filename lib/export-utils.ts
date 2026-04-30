@@ -111,7 +111,7 @@ export function exportDDNEJuji(orders: OrderWithDetails[], brand: string, filena
     return {
       'Order No':       o.tracking_number ?? o.id,
       'Project':        projectName,
-      'Shopee Order No': '',
+      'Shopee Order No': (o.channel === 'Shopee' || o.channel === 'Shopee SG') ? (o.tracking_number ?? '') : '',
       'Unique Id':      '',
       'Order Date':     o.order_date ?? '',
       'Receiver Name':  c?.name ?? '',

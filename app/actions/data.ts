@@ -348,6 +348,26 @@ export async function upsertCustomer(name: string, phone: string, address?: stri
   return data.id as string
 }
 
+export async function upsertCustomerByNameOnly(name: string): Promise<string> {
+  const sb = createAdminClient()
+  const { data: existing } = await sb
+    .from('customers')
+    .select('id')
+    .ilike('name', name)
+    .is('phone', null)
+    .limit(1)
+    .maybeSingle()
+  if (existing) return existing.id as string
+
+  const { data, error } = await sb
+    .from('customers')
+    .insert({ name, phone: null })
+    .select('id')
+    .single()
+  if (error) throw new Error(error.message)
+  return data.id as string
+}
+
 export async function bulkUpsertCustomers(rows: { name: string; phone: string; address?: string | null }[]): Promise<Record<string, string>> {
   const sb = createAdminClient()
   const map: Record<string, string> = {}
@@ -470,7 +490,7 @@ export async function createOrder(payload: {
   order_date: string
   fb_name?: string | null
   channel: string
-  purchase_reason: string
+  purchase_reason: string | null
   is_new_customer: boolean
   tracking_number?: string | null
   state?: string | null

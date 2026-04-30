@@ -46,6 +46,20 @@ export async function uploadCustomerReceipt(
   return publicUrl
 }
 
+// ─── Set customer receipt URL (from pasted link) ─────────────────────────────
+
+export async function setCustomerReceiptUrl(
+  customerId: string,
+  url: string,
+): Promise<void> {
+  const supabase = createAdminClient()
+  const { error } = await supabase
+    .from('customers')
+    .update({ receipt_url: url, receipt_uploaded_at: new Date().toISOString() })
+    .eq('id', customerId)
+  if (error) throw new Error('Failed to update customer: ' + error.message)
+}
+
 // ─── Remove customer receipt ──────────────────────────────────────────────────
 
 export async function removeCustomerReceipt(
