@@ -21,7 +21,7 @@ export const orderSchema = z.object({
   package_name: z.string().optional(),
   package_id: z.string().uuid().optional().nullable(),
   purchase_reason: z.string().optional(),
-  is_new_customer: z.boolean(),
+  is_new_customer: z.boolean().optional(),
   total_price: z.coerce.number().min(0, 'Price must be positive'),
   status: z.enum(['pending', 'processing', 'shipped', 'delivered', 'cancelled']).default('pending'),
   order_date: z.string().min(1, 'Order date is required'),

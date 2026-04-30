@@ -55,12 +55,13 @@ export default function AddOrderModal({ open, onClose }: Props) {
   const [showCustomState, setShowCustomState] = useState(false)
   const [receiptLink, setReceiptLink] = useState('')
   const [priceAutoFilled, setPriceAutoFilled] = useState(false)
+  const [newRepeatAutoFilled, setNewRepeatAutoFilled] = useState(false)
 
   const today = new Date().toISOString().split('T')[0]
 
   const { register, handleSubmit, setValue, watch, reset, control, formState: { errors } } = useForm<OrderFormData>({
     resolver: zodResolver(orderSchema),
-    defaultValues: { status: 'pending', order_date: today, is_new_customer: true, package_id: null },
+    defaultValues: { status: 'pending', order_date: today, package_id: null },
   })
 
   const selectedProjectId = watch('project_id')
@@ -84,15 +85,19 @@ export default function AddOrderModal({ open, onClose }: Props) {
     const customer = await fetchCustomerByPhone(phone)
     if (customer) {
       setValue('customer_name', customer.name)
-      setValue('is_new_customer', false)
       setFoundCustomerId(customer.id)
       setFoundCustomerName(customer.name)
-      setAutoFilled(new Set(['customer_name', 'is_new_customer']))
+      setAutoFilled(new Set(['customer_name']))
+      // Auto-detect New/Repeat from order history
+      const orderCount = (customer as any).total_orders ?? 0
+      setValue('is_new_customer', orderCount === 0)
+      setNewRepeatAutoFilled(true)
     } else {
-      setValue('is_new_customer', true)
+      setValue('is_new_customer', undefined as any)
       setFoundCustomerId(null)
       setFoundCustomerName(null)
-      setAutoFilled(new Set(['is_new_customer']))
+      setAutoFilled(new Set())
+      setNewRepeatAutoFilled(false)
     }
     setLookingUp(false)
   }
@@ -142,7 +147,7 @@ export default function AddOrderModal({ open, onClose }: Props) {
         fb_name: data.fb_name || null,
         channel: data.channel,
         purchase_reason: data.purchase_reason || null,
-        is_new_customer: data.is_new_customer,
+        is_new_customer: data.is_new_customer ?? true,
         tracking_number: data.tracking_number ?? null,
         state: data.state || null,
         address: data.address || null,
@@ -164,7 +169,7 @@ export default function AddOrderModal({ open, onClose }: Props) {
   }
 
   function handleClose() {
-    reset({ status: 'pending', order_date: today, is_new_customer: true, package_id: null, tracking_number: null, state: '', address: '' })
+    reset({ status: 'pending', order_date: today, package_id: null, tracking_number: null, state: '', address: '' })
     setFoundCustomerId(null)
     setFoundCustomerName(null)
     setAutoFilled(new Set())
@@ -172,6 +177,7 @@ export default function AddOrderModal({ open, onClose }: Props) {
     setShowCustomState(false)
     setReceiptLink('')
     setPriceAutoFilled(false)
+    setNewRepeatAutoFilled(false)
     onClose()
   }
 
@@ -244,7 +250,21 @@ export default function AddOrderModal({ open, onClose }: Props) {
           {/* Phone */}
           <div className="space-y-1">
             <Label>No. Tel</Label>
-            <Input placeholder="601xxxxxxxx" {...register('customer_phone')} onBlur={lookupPhone} />
+            <Input
+              placeholder="601xxxxxxxx"
+              {...register('customer_phone', {
+                onChange: e => {
+                  if (!e.target.value.trim()) {
+                    setValue('is_new_customer', undefined as any)
+                    setFoundCustomerId(null)
+                    setFoundCustomerName(null)
+                    setNewRepeatAutoFilled(false)
+                    setAutoFilled(new Set())
+                  }
+                },
+              })}
+              onBlur={lookupPhone}
+            />
             {lookingUp && <p className="text-xs text-muted-foreground">Looking up customer…</p>}
             {foundCustomerName && !lookingUp && (
               <p className="text-xs text-green-600 font-medium">✓ Existing customer: {foundCustomerName}</p>
@@ -400,10 +420,12 @@ export default function AddOrderModal({ open, onClose }: Props) {
           <div className="space-y-1">
             <Label>New / Repeat</Label>
             <Controller name="is_new_customer" control={control} render={({ field }) => (
-              <Select value={field.value ? 'new' : 'repeat'}
-                onValueChange={v => { field.onChange(v === 'new'); setAutoFilled(p => { const n = new Set(p); n.delete('is_new_customer'); return n }) }}>
-                <SelectTrigger className={cn(isAuto('is_new_customer') && 'border-red-200 text-red-600')}>
-                  <SelectValue />
+              <Select
+                value={field.value === undefined ? '' : field.value ? 'new' : 'repeat'}
+                onValueChange={v => { field.onChange(v === 'new'); setNewRepeatAutoFilled(false) }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="— Not set —" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="new">New</SelectItem>
@@ -411,7 +433,9 @@ export default function AddOrderModal({ open, onClose }: Props) {
                 </SelectContent>
               </Select>
             )} />
-            {isAuto('is_new_customer') && <p className="text-xs text-red-500">Auto-detected from phone lookup</p>}
+            {newRepeatAutoFilled && (
+              <p className="text-xs text-muted-foreground">Auto-detected from order history · edit if needed</p>
+            )}
           </div>
 
           {/* Receipt Link (NE / DD / Juji only) */}
