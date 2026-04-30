@@ -20,7 +20,7 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { BRAND_COLORS } from '@/lib/constants'
 
-const AUTO_ID_PROJECTS = ['DD', 'Juji', 'NE']
+const AUTO_ID_PROJECTS = ['DD', 'Juji', 'NE', 'FIOR', 'KHH']
 const RECEIPT_BRANDS = ['NE', 'DD', 'Juji']
 
 const CHANNELS = [

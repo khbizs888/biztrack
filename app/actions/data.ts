@@ -733,7 +733,7 @@ export async function updateOrderStatus(id: string, status: string) {
 }
 
 // ─────────────────────────────────────────────
-// Auto-generate Order ID (DD, Juji, NE)
+// Auto-generate Order ID (all brands: DD, Juji, NE, FIOR, KHH)
 // ─────────────────────────────────────────────
 
 export async function generateOrderId(projectId: string): Promise<string> {
