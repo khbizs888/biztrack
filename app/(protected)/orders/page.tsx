@@ -16,7 +16,7 @@ import { Plus, ShoppingCart, Download, FileUp, History, Calendar, ChevronLeft, C
 import type { OrderFilters, Order } from '@/lib/types'
 import { exportOrders } from '@/lib/export-utils'
 import { useCleanupDialogArtifacts } from '@/lib/hooks/use-cleanup-dialog-artifacts'
-import TeamAddOrderModal from '@/components/modules/orders/TeamAddOrderModal'
+import AddOrderModal from '@/components/modules/orders/AddOrderModal'
 import ImportOrdersModal from '@/components/modules/orders/ImportOrdersModal'
 import OrderActions from '@/components/modules/orders/OrderActions'
 import { BRAND_COLORS, BRANDS } from '@/lib/constants'
@@ -579,15 +579,7 @@ export default function OrdersPage() {
         )
       )}
 
-      <TeamAddOrderModal
-        open={showAddModal}
-        onClose={() => setShowAddModal(false)}
-        defaultProjectId={
-          selectedBrand !== 'All' && selectedBrand !== 'Unassigned'
-            ? brandProjectId[selectedBrand]
-            : undefined
-        }
-      />
+      <AddOrderModal open={showAddModal} onClose={() => setShowAddModal(false)} />
       <ImportOrdersModal open={showImportModal} onClose={() => setShowImportModal(false)} />
     </div>
   )
