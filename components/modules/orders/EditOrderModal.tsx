@@ -1,8 +1,10 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { updateOrder } from '@/app/actions/data'
+import { setCustomerReceiptUrl, removeCustomerReceipt } from '@/app/actions/customers'
+import { createClient } from '@/lib/supabase/client'
 import { useProjects, type Package } from '@/lib/hooks/useProjects'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -10,6 +12,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { toast } from 'sonner'
+import { cn } from '@/lib/utils'
 import type { Order } from '@/lib/types'
 
 const MALAYSIA_STATES = [
@@ -22,6 +25,7 @@ const STATUSES = ['pending', 'processing', 'shipped', 'delivered', 'cancelled']
 const PAYMENT_STATUSES = ['Settled', 'Pending', 'Refunded']
 const DELIVERY_STATUSES = ['Pending', 'Delivered', 'Returned']
 const CHANNELS = ['Facebook', 'TikTok', 'Shopee', 'Lazada', 'Xiaohongshu', 'WhatsApp', 'Website', 'Other']
+const RECEIPT_BRANDS = ['NE', 'DD', 'Juji']
 
 interface Props { order: Order | null; onClose: () => void }
 
@@ -46,6 +50,15 @@ export default function EditOrderModal({ order, onClose }: Props) {
   const [customState, setCustomState] = useState(false)
   const [customChannel, setCustomChannel] = useState(false)
 
+  // Receipt state
+  const [originalReceiptUrl, setOriginalReceiptUrl] = useState<string | null>(null)
+  const [receiptUrl, setReceiptUrl] = useState<string | null>(null)
+  const [receiptFilePath, setReceiptFilePath] = useState<string | null>(null) // path of newly uploaded file
+  const [receiptRemoved, setReceiptRemoved] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
   useEffect(() => {
     if (!order) return
     setDate(order.order_date ?? '')
@@ -65,9 +78,84 @@ export default function EditOrderModal({ order, onClose }: Props) {
     setStatus(order.status ?? 'pending')
     setDeliveryStatus(order.delivery_status ?? 'Pending')
     setNotes(order.purchase_reason ?? '')
+    // Load existing receipt
+    const existing = (order.customers as any)?.receipt_url ?? null
+    setOriginalReceiptUrl(existing)
+    setReceiptUrl(existing)
+    setReceiptFilePath(null)
+    setReceiptRemoved(false)
+    setUploading(false)
+    setUploadError('')
   }, [order])
 
   const projectPackages: Package[] = projects.find(p => p.id === projectId)?.packages ?? []
+  const selectedProject = projects.find(p => p.id === projectId)
+  const isReceiptBrand = RECEIPT_BRANDS.includes(selectedProject?.name ?? '')
+
+  async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (fileInputRef.current) fileInputRef.current.value = ''
+
+    const ALLOWED = ['image/jpeg', 'image/png', 'image/webp']
+    if (!ALLOWED.includes(file.type)) {
+      setUploadError('Only JPG, PNG, WEBP images are allowed')
+      return
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setUploadError('File must be under 5MB')
+      return
+    }
+
+    setUploading(true)
+    setUploadError('')
+
+    // Remove previously uploaded (not-yet-saved) file if any
+    if (receiptFilePath) {
+      createClient().storage.from('receipts').remove([receiptFilePath]).catch(() => {})
+      setReceiptFilePath(null)
+    }
+
+    const timestamp = Date.now()
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
+    const path = `orders/${timestamp}_${safeName}`
+
+    try {
+      const supabase = createClient()
+      const { error } = await supabase.storage.from('receipts').upload(path, file, {
+        contentType: file.type,
+        upsert: true,
+      })
+      if (error) throw error
+      const { data: { publicUrl } } = supabase.storage.from('receipts').getPublicUrl(path)
+      setReceiptUrl(publicUrl)
+      setReceiptFilePath(path)
+      setReceiptRemoved(false)
+    } catch {
+      setUploadError('Upload failed, try again')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  function handleRemoveReceipt() {
+    // If there's a newly uploaded file, delete it from storage immediately
+    if (receiptFilePath) {
+      createClient().storage.from('receipts').remove([receiptFilePath]).catch(() => {})
+      setReceiptFilePath(null)
+    }
+    setReceiptUrl(null)
+    setReceiptRemoved(true)
+    setUploadError('')
+  }
+
+  function handleCancelClose() {
+    // If a new file was uploaded but we're cancelling, delete it
+    if (receiptFilePath) {
+      createClient().storage.from('receipts').remove([receiptFilePath]).catch(() => {})
+    }
+    onClose()
+  }
 
   function handlePackageSelect(pkgId: string) {
     if (pkgId === 'none') { setPackageId(''); setPackageName(''); return }
@@ -97,6 +185,19 @@ export default function EditOrderModal({ order, onClose }: Props) {
         delivery_status: deliveryStatus || null,
         purchase_reason: notes || null,
       })
+
+      const customerId = order.customer_id
+      if (customerId && isReceiptBrand) {
+        if (receiptUrl && receiptUrl !== originalReceiptUrl) {
+          // New image uploaded — save URL
+          try { await setCustomerReceiptUrl(customerId, receiptUrl) } catch { /* best-effort */ }
+          setReceiptFilePath(null) // committed — don't delete on close
+        } else if (receiptRemoved && originalReceiptUrl) {
+          // User removed existing receipt — clear it
+          try { await removeCustomerReceipt(customerId, '') } catch { /* best-effort */ }
+        }
+      }
+
       toast.success('Order updated')
       queryClient.invalidateQueries({ queryKey: ['orders'] })
       queryClient.invalidateQueries({ queryKey: ['dashboard'] })
@@ -109,7 +210,7 @@ export default function EditOrderModal({ order, onClose }: Props) {
   }
 
   return (
-    <Dialog open={!!order} onOpenChange={() => onClose()}>
+    <Dialog open={!!order} onOpenChange={() => handleCancelClose()}>
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader><DialogTitle>Edit Order</DialogTitle></DialogHeader>
         <div className="space-y-3">
@@ -252,8 +353,67 @@ export default function EditOrderModal({ order, onClose }: Props) {
             <Input value={notes} onChange={e => setNotes(e.target.value)} placeholder="e.g. Weight loss" />
           </div>
 
+          {/* Receipt Image (NE / DD / Juji only) */}
+          {isReceiptBrand && (
+            <div className="space-y-1">
+              <Label className="text-xs">Receipt Image</Label>
+              {receiptUrl ? (
+                <div className="space-y-2">
+                  <img src={receiptUrl} alt="Receipt" className="h-20 rounded border object-cover" />
+                  <div className="flex gap-2">
+                    <label className={cn('cursor-pointer text-xs text-muted-foreground underline', uploading && 'opacity-50 pointer-events-none')}>
+                      {uploading ? 'Uploading…' : 'Replace'}
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
+                        className="sr-only"
+                        onChange={handleFileSelect}
+                      />
+                    </label>
+                    <button type="button" onClick={handleRemoveReceipt} className="text-xs text-destructive underline">Remove</button>
+                  </div>
+                </div>
+              ) : (
+                <label
+                  className={cn(
+                    'flex flex-col items-center justify-center gap-1 border border-dashed rounded-md p-3 cursor-pointer',
+                    'text-xs text-muted-foreground hover:border-primary/50 transition-colors',
+                    uploading && 'opacity-60 pointer-events-none',
+                  )}
+                >
+                  {uploading ? (
+                    <span className="flex items-center gap-1.5">
+                      <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                      </svg>
+                      Uploading…
+                    </span>
+                  ) : (
+                    <>
+                      <span>Click to upload receipt</span>
+                      <span className="text-[10px]">JPG, PNG, WEBP · max 5MB</span>
+                    </>
+                  )}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    className="sr-only"
+                    onChange={handleFileSelect}
+                  />
+                </label>
+              )}
+              {uploadError && <p className="text-xs text-destructive">{uploadError}</p>}
+              {receiptRemoved && !receiptUrl && (
+                <p className="text-xs text-muted-foreground">Receipt will be removed on save. <button type="button" className="underline" onClick={() => { setReceiptUrl(originalReceiptUrl); setReceiptRemoved(false) }}>Undo</button></p>
+              )}
+            </div>
+          )}
+
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={onClose}>Cancel</Button>
+            <Button variant="outline" onClick={handleCancelClose}>Cancel</Button>
             <Button onClick={handleSave} disabled={loading}>{loading ? 'Saving…' : 'Save Changes'}</Button>
           </div>
         </div>
