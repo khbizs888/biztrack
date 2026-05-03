@@ -31,7 +31,7 @@ import { Upload, AlertCircle, RefreshCw, CheckCircle2, XCircle, Save, ChevronRig
 type Step = 'upload' | 'mapping' | 'preview' | 'done'
 type RowError = 'missing_name' | 'invalid_price' | 'missing_date'
 type RowStatus = 'ready' | 'warning' | 'error' | 'skip'
-type CsvFormat = 'A' | 'B' | 'unknown'
+type CsvFormat = 'A' | 'B' | 'DD' | 'unknown'
 
 interface ParsedRow {
   orderRef: string
@@ -54,6 +54,7 @@ interface ParsedRow {
   packageId: string | null
   productName: string
   remark: string
+  state: string
   sourceId: string | null
   errors: RowError[]
   status: RowStatus
@@ -88,6 +89,8 @@ function detectFormat(headers: string[]): CsvFormat {
   const lower = headers.map(h => h.toLowerCase().trim())
   if (lower.includes('线上单号')) return 'A'
   if (lower.some(h => h.includes('receiver name'))) return 'B'
+  // DD format: has 'order code' column (e.g. DD003120)
+  if (lower.includes('order code')) return 'DD'
   // fallback heuristics
   if (lower.includes('full phone no') || lower.includes('parcel')) return 'B'
   if (lower.includes('name') && lower.includes('phone number')) return 'A'
@@ -137,6 +140,20 @@ const FORMAT_B_AUTO_KEYS: Record<string, string[]> = {
   price_domain:    ['Price Domain', 'price domain', 'COD Amount'],
 }
 
+const FORMAT_DD_AUTO_KEYS: Record<string, string[]> = {
+  date:           ['Date'],
+  channel:        ['Channel'],
+  customer_name:  ['Name'],
+  phone:          ['Phone Number'],
+  package:        ['Package'],
+  price:          ['Total Price'],
+  remark:         ['Remark'],
+  payment_method: ['Payment method', 'Payment Method'],
+  state:          ['State'],
+  tracking:       ['Order code'],
+  customer_type:  ['New or Repeat'],
+}
+
 // ── Field definitions ──────────────────────────────────────────────────────────
 
 const FIELD_DEFS_A: FieldDef[] = [
@@ -156,6 +173,20 @@ const FIELD_DEFS_A: FieldDef[] = [
   { key: 'courier',       label: 'Courier',           required: false, autoKeys: FORMAT_A_AUTO_KEYS.courier },
   { key: 'customer_type', label: 'New / Repeat',      required: false, autoKeys: FORMAT_A_AUTO_KEYS.customer_type },
   { key: 'remark',        label: 'Remark',            required: false, autoKeys: FORMAT_A_AUTO_KEYS.remark },
+]
+
+const FIELD_DEFS_DD: FieldDef[] = [
+  { key: 'date',           label: 'Order Date',      required: true,  autoKeys: FORMAT_DD_AUTO_KEYS.date },
+  { key: 'customer_name',  label: 'Customer Name',   required: true,  autoKeys: FORMAT_DD_AUTO_KEYS.customer_name },
+  { key: 'phone',          label: 'Phone Number',    required: false, autoKeys: FORMAT_DD_AUTO_KEYS.phone },
+  { key: 'channel',        label: 'Channel',         required: false, autoKeys: FORMAT_DD_AUTO_KEYS.channel },
+  { key: 'package',        label: 'Package Name',    required: false, autoKeys: FORMAT_DD_AUTO_KEYS.package },
+  { key: 'price',          label: 'Total Price',     required: true,  autoKeys: FORMAT_DD_AUTO_KEYS.price },
+  { key: 'remark',         label: 'Remark',          required: false, autoKeys: FORMAT_DD_AUTO_KEYS.remark },
+  { key: 'payment_method', label: 'Payment Method',  required: false, autoKeys: FORMAT_DD_AUTO_KEYS.payment_method },
+  { key: 'state',          label: 'State',           required: false, autoKeys: FORMAT_DD_AUTO_KEYS.state },
+  { key: 'tracking',       label: 'Order Code',      required: false, autoKeys: FORMAT_DD_AUTO_KEYS.tracking },
+  { key: 'customer_type',  label: 'New / Repeat',    required: false, autoKeys: FORMAT_DD_AUTO_KEYS.customer_type },
 ]
 
 const FIELD_DEFS_B: FieldDef[] = [
@@ -180,7 +211,7 @@ const FIELD_DEFS_B: FieldDef[] = [
 // ── Parse helpers ──────────────────────────────────────────────────────────────
 
 function autoDetectMapping(headers: string[], format: CsvFormat): Record<string, string> {
-  const fieldDefs = format === 'B' ? FIELD_DEFS_B : FIELD_DEFS_A
+  const fieldDefs = format === 'B' ? FIELD_DEFS_B : format === 'DD' ? FIELD_DEFS_DD : FIELD_DEFS_A
   const normalized = headers.map(h => ({ original: h, lower: h.trim().toLowerCase() }))
   const result: Record<string, string> = {}
   for (const field of fieldDefs) {
@@ -387,8 +418,85 @@ function parseRows(
   for (const raw of rawData) {
     const get = (key: string) => getField(raw, mapping, key)
 
-    if (format === 'B') {
-      // ── Format B (DD, Juji, NE) ────────────────────────────────────────────
+    if (format === 'DD') {
+      // ── Format DD (Diamond Drink actual CSV format) ───────────────────────
+      const dateRaw         = get('date')
+      const customerNameRaw = get('customer_name')
+      const phoneRaw        = get('phone')
+      const channelRaw      = get('channel')
+      const packageName     = get('package')
+      const priceRaw        = get('price')
+      const remarkRaw       = get('remark')
+      const paymentMethod   = get('payment_method')
+      const stateRaw        = get('state')
+      const trackingRaw     = get('tracking')
+      const customerType    = get('customer_type')
+
+      if (!dateRaw && !customerNameRaw) continue
+
+      const totalPrice = parsePrice(priceRaw)
+      const date       = parseDate(dateRaw)
+      // Phone Number col has full number (e.g. 60196816681), no scientific notation
+      const phone      = normalizePhone(phoneRaw, 'B')
+      // Store channel as-is (e.g. "【焕肤】FB", "FB SG")
+      const channel    = channelRaw.trim()
+      const isRepeat   = parseIsRepeat(customerType)
+      // COD if Payment method column contains 'COD'
+      const isCod      = paymentMethod.trim().toUpperCase().includes('COD')
+      const tracking   = trackingRaw.trim() || null
+
+      const projectId = fallbackProjectId ?? null
+      const pkgMatch  = findPackageMatch('', packageName, projectId, allPackages)
+
+      const errors: RowError[] = []
+      if (!customerNameRaw) errors.push('missing_name')
+      if (!dateRaw)          errors.push('missing_date')
+      if (isNaN(totalPrice)) errors.push('invalid_price')
+
+      let status: RowStatus = 'ready'
+      let importWarning: string | undefined
+      let skipReason: string | undefined
+
+      if (errors.length > 0) {
+        status = 'error'
+        skipReason = errors.map(errorLabel).join(', ')
+      } else if (!pkgMatch.matched && packageName) {
+        status = 'warning'
+        importWarning = pkgMatch.warning
+      }
+
+      parsed.push({
+        orderRef:       tracking ?? `row-${parsed.length + 1}`,
+        date,
+        customerName:   customerNameRaw,
+        phone,
+        packageName,
+        trackingNumber: tracking,
+        totalPrice:     isNaN(totalPrice) ? 0 : totalPrice,
+        listPrice:      null,
+        channel,
+        address:        '',
+        isRepeat,
+        isCod,
+        codAmount:      null,
+        shippingFee:    null,
+        courier:        '',
+        country:        'MY',
+        projectId,
+        packageId:      pkgMatch.id,
+        productName:    packageName || channel || '—',
+        remark:         remarkRaw,
+        state:          stateRaw,
+        sourceId:       null,
+        errors,
+        status,
+        packageMatched: pkgMatch.matched,
+        skipReason,
+        importWarning,
+        needsAutoId:    !tracking,
+      })
+    } else if (format === 'B') {
+      // ── Format B (Juji, NE) ───────────────────────────────────────────────
       const rowNumber       = get('row_number')
       const track2026       = get('track_2026')
       const track2025       = get('track_2025')
@@ -481,6 +589,7 @@ function parseRows(
         packageId:      pkgMatch.id,
         productName:    packageName || channelRaw || '—',
         remark:         remarkRaw,
+        state:          '',
         sourceId,
         errors,
         status,
@@ -570,6 +679,7 @@ function parseRows(
         packageId:   pkgMatch.id,
         productName: packageName || channelRaw || '—',
         remark:      remarkRaw,
+        state:       get('state'),
         sourceId:    null,
         errors,
         status,
@@ -794,6 +904,7 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
           courier:         r.courier     || null,
           country:         r.country     || 'MY',
           purchase_reason: r.remark      || null,
+          state:           r.state       || null,
         })
       }
 
@@ -877,7 +988,7 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
   const invalidRows  = rows.filter(r => r.status === 'error')
   const importableRows = rows.filter(r => r.status === 'ready' || r.status === 'warning')
   const dialogWidth = step === 'preview' ? 'max-w-5xl' : step === 'mapping' ? 'max-w-2xl' : 'max-w-md'
-  const currentFieldDefs = detectedFormat === 'B' ? FIELD_DEFS_B : FIELD_DEFS_A
+  const currentFieldDefs = detectedFormat === 'B' ? FIELD_DEFS_B : detectedFormat === 'DD' ? FIELD_DEFS_DD : FIELD_DEFS_A
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -903,7 +1014,7 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                Orders will be linked to this project. Required for Format B (DD/Juji/NE). Auto-detected from channel for Format A.
+                Orders will be linked to this project. Required for Format B (Juji/NE) and Format DD. Auto-detected from channel for Format A.
               </p>
             </div>
 
@@ -915,7 +1026,8 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
               <p className="text-sm font-medium">Click to upload a CSV file</p>
               <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
                 Format A (FIOR/KHH): 线上单号, Date, Name, Phone number, COD…<br />
-                Format B (DD/Juji/NE): Number, Receiver Name, Full Phone No, Remark…
+                Format B (Juji/NE): Number, Receiver Name, Full Phone No, Remark…<br />
+                Format DD (DD): Date, Name, Phone Number, Order code, Payment method…
               </p>
               <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleFileChange} />
             </div>
@@ -934,7 +1046,9 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
               <div className="flex items-center gap-2 text-xs">
                 <span className="font-medium">Detected Format:</span>
                 <Badge variant={detectedFormat === 'A' ? 'default' : 'secondary'}>
-                  {detectedFormat === 'A' ? 'Format A — FIOR/KHH style' : 'Format B — DD/Juji/NE style'}
+                  {detectedFormat === 'A' ? 'Format A — FIOR/KHH style'
+                    : detectedFormat === 'DD' ? 'Format DD — Diamond Drink'
+                    : 'Format B — Juji/NE style'}
                 </Badge>
               </div>
             )}
