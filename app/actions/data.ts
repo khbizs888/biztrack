@@ -547,7 +547,13 @@ export async function bulkInsertOrders(
 
   for (let i = 0; i < rows.length; i += 50) {
     const batch = rows.slice(i, i + 50)
-    const { data, error } = await sb.from('orders').insert(batch).select('id')
+    // Upsert with ignoreDuplicates so re-imports and partial-failure retries
+    // silently skip rows whose tracking_number already exists instead of
+    // throwing a unique-constraint violation for the whole batch.
+    const { data, error } = await sb
+      .from('orders')
+      .upsert(batch, { onConflict: 'tracking_number', ignoreDuplicates: true })
+      .select('id')
     if (error) {
       errors.push(`Batch ${Math.floor(i / 50) + 1}: ${error.message}`)
     } else {
