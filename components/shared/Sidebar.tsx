@@ -45,6 +45,7 @@ const NAV: NavGroup[] = [
   {
     label: 'Catalog', icon: Package,
     children: [
+      { label: 'Packages',  href: '/catalog/packages' },
       { label: 'Products',  href: '/products' },
       { label: 'Inventory', href: '/inventory' },
       { label: 'Suppliers', href: '/suppliers' },
