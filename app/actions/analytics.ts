@@ -500,6 +500,8 @@ export async function fetchCustomerInsights(
       .select('*', { count: 'exact', head: true })
       .eq('project_id', projectId)
       .not('customer_id', 'is', null)
+      .gte('order_date', dateFrom)
+      .lte('order_date', dateTo)
 
     console.log('[CI] projOrders total count:', projTotal)
 
@@ -517,6 +519,8 @@ export async function fetchCustomerInsights(
             .select('customer_id, order_date, total_price, payment_status')
             .eq('project_id', projectId)
             .not('customer_id', 'is', null)
+            .gte('order_date', dateFrom)
+            .lte('order_date', dateTo)
             .order('order_date', { ascending: true })
             .range(p * PROJ_PAGE, (p + 1) * PROJ_PAGE - 1)
             .then(({ data }) => (data ?? []) as typeof projOrders)
