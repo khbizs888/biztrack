@@ -489,18 +489,45 @@ export async function fetchCustomerInsights(
     console.log('[CI] projectId received:', projectId)
     console.log('[CI] dateFrom:', dateFrom, 'dateTo:', dateTo)
 
-    const { data: projOrders } = await sb
+    // PostgREST max_rows caps every query regardless of .limit().
+    // Paginate with PAGE_SIZE=100 (safe below any reasonable max_rows).
+    // Parallel batches of 10 keep total round-trips low (~5 batches for 4131 orders).
+    const PROJ_PAGE = 100
+    const PROJ_PARALLEL = 10
+
+    const { count: projTotal } = await sb
       .from('orders')
-      .select('customer_id, order_date, total_price, payment_status')
+      .select('*', { count: 'exact', head: true })
       .eq('project_id', projectId)
       .not('customer_id', 'is', null)
-      .order('order_date', { ascending: true })
-      .limit(10000)
 
-    console.log('[CI] projOrders fetched:', projOrders?.length ?? 0)
-    console.log('[CI] sample projOrder:', projOrders?.[0])
+    console.log('[CI] projOrders total count:', projTotal)
 
-    for (const o of projOrders ?? []) {
+    const projNumPages = Math.ceil((projTotal ?? 0) / PROJ_PAGE)
+    const projOrders: Array<{ customer_id: string; order_date: string; total_price: number; payment_status: string | null }> = []
+
+    for (let b = 0; b < projNumPages; b += PROJ_PARALLEL) {
+      const batch = Array.from(
+        { length: Math.min(PROJ_PARALLEL, projNumPages - b) },
+        (_, i) => b + i
+      )
+      const batchData = await Promise.all(
+        batch.map(p =>
+          sb.from('orders')
+            .select('customer_id, order_date, total_price, payment_status')
+            .eq('project_id', projectId)
+            .not('customer_id', 'is', null)
+            .order('order_date', { ascending: true })
+            .range(p * PROJ_PAGE, (p + 1) * PROJ_PAGE - 1)
+            .then(({ data }) => (data ?? []) as typeof projOrders)
+        )
+      )
+      for (const page of batchData) projOrders.push(...page)
+    }
+
+    console.log('[CI] projOrders fetched (paginated):', projOrders.length)
+
+    for (const o of projOrders) {
       const cid = o.customer_id as string
       if (!brandFirstOrderDate[cid]) brandFirstOrderDate[cid] = o.order_date
       if (!customerProjectData[cid]) customerProjectData[cid] = { spend: 0, orders: 0, lastOrderDate: o.order_date }
@@ -533,56 +560,79 @@ export async function fetchCustomerInsights(
     }
   }
 
-  // Fetch customers. When brand-scoped, we have an explicit ID list which may
-  // contain 1000+ entries — passing them all in a single .in() would exceed
-  // PostgREST's URL length limit and silently return null. Chunk into ≤400-ID
-  // batches and merge in JS instead.
-  let customers: Array<{
+  // Fetch customer profiles.
+  //
+  // Strategy: paginate with .range() page-by-page and stop when a page comes
+  // back empty. This bypasses PostgREST max_rows regardless of its value.
+  //
+  // Brand-scoped: filter by customer ID set derived from orders above.
+  // Large IN() lists fail silently, so we paginate the WHOLE customers table
+  // ordered by total_spent, and keep only rows whose id is in brandCustomerIds.
+  // Each page is small (≤100), so URL stays short. We stop early once we've
+  // collected all expected customers (brandCustomerIds.length).
+  //
+  // All-brands: same paginated scan, no filter.
+  const CUST_SELECT = 'id, name, phone, customer_tag, total_orders, total_spent, first_order_date, last_order_date, follow_up_date, follow_up_note'
+  const CUST_PAGE = 100
+
+  type CustRow = {
     id: string; name: string; phone: string;
     customer_tag: string | null; total_orders: number | null; total_spent: number | null;
     first_order_date: string | null; last_order_date: string | null;
     follow_up_date: string | null; follow_up_note: string | null
-  }> = []
+  }
+  let customers: CustRow[] = []
 
-  if (brandCustomerIds !== null) {
-    // Brand-scoped: fetch in chunks of 400
-    const CHUNK = 400
-    for (let ci = 0; ci < brandCustomerIds.length; ci += CHUNK) {
-      const chunk = brandCustomerIds.slice(ci, ci + CHUNK)
-      const { data: chunkData } = await sb
-        .from('customers')
-        .select('id, name, phone, customer_tag, total_orders, total_spent, first_order_date, last_order_date, follow_up_date, follow_up_note')
-        .in('id', chunk)
-        .limit(CHUNK)
-      if (chunkData) customers.push(...chunkData)
-    }
-    // Re-sort after merging chunks (original query sorted by total_spent DESC)
-    customers.sort((a, b) => Number(b.total_spent ?? 0) - Number(a.total_spent ?? 0))
-  } else {
-    // All brands — no ID filter needed
-    const { data } = await sb
+  const brandSet = brandCustomerIds !== null ? new Set(brandCustomerIds) : null
+  const expectedCount = brandSet !== null ? brandSet.size : Infinity
+
+  let custPage = 0
+  while (customers.length < expectedCount) {
+    const { data: pageData } = await sb
       .from('customers')
-      .select('id, name, phone, customer_tag, total_orders, total_spent, first_order_date, last_order_date, follow_up_date, follow_up_note')
+      .select(CUST_SELECT)
       .order('total_spent', { ascending: false })
-      .limit(10000)
-    customers = data ?? []
+      .range(custPage * CUST_PAGE, (custPage + 1) * CUST_PAGE - 1)
+
+    if (!pageData || pageData.length === 0) break
+
+    const rows = (pageData as CustRow[])
+    if (brandSet !== null) {
+      for (const r of rows) {
+        if (brandSet.has(r.id)) customers.push(r)
+      }
+    } else {
+      customers.push(...rows)
+    }
+
+    if (pageData.length < CUST_PAGE) break // last page
+    custPage++
   }
 
   console.log('[CI] customers fetched:', customers.length)
 
-  // ── Orders in date range for new-vs-repeat trend (already project-scoped) ───
-  let ordQ = sb
-    .from('orders')
-    .select('order_date, is_new_customer')
-    .gte('order_date', dateFrom)
-    .lte('order_date', dateTo)
-    .neq('status', 'cancelled')
-    .limit(10000)
-  if (projectId) ordQ = ordQ.eq('project_id', projectId)
-  const { data: orders } = await ordQ
+  // ── Orders in date range for new-vs-repeat trend — paginated ───────────────
+  const ORD_PAGE = 100
+  const orders: Array<{ order_date: string; is_new_customer: boolean | null }> = []
+  let ordPage = 0
+  while (true) {
+    let q = sb
+      .from('orders')
+      .select('order_date, is_new_customer')
+      .gte('order_date', dateFrom)
+      .lte('order_date', dateTo)
+      .neq('status', 'cancelled')
+      .range(ordPage * ORD_PAGE, (ordPage + 1) * ORD_PAGE - 1)
+    if (projectId) q = q.eq('project_id', projectId)
+    const { data: pageData } = await q
+    if (!pageData || pageData.length === 0) break
+    orders.push(...(pageData as typeof orders))
+    if (pageData.length < ORD_PAGE) break
+    ordPage++
+  }
 
-  console.log('[CI] date-range orders fetched:', orders?.length ?? 0)
-  console.log('[CI] sample order:', orders?.[0])
+  console.log('[CI] date-range orders fetched:', orders.length)
+  console.log('[CI] sample order:', orders[0])
 
   const from = parseISO(dateFrom)
   const to = parseISO(dateTo)
@@ -696,14 +746,39 @@ export async function fetchCustomerInsights(
 
   // ── Monthly trend: last 6 months using is_new_customer on orders ─────────────
   const sixMonthsAgo = format(subMonths(today, 6), 'yyyy-MM-dd')
-  let trendQ = sb
+  // Paginate trendOrders the same way — 6 months can exceed max_rows
+  const TREND_PAGE = 100
+  const TREND_PARALLEL = 10
+
+  let trendCountQ = sb
     .from('orders')
-    .select('order_date, total_price, is_new_customer')
+    .select('*', { count: 'exact', head: true })
     .gte('order_date', sixMonthsAgo)
     .neq('status', 'cancelled')
-    .limit(10000)
-  if (projectId) trendQ = trendQ.eq('project_id', projectId)
-  const { data: trendOrders } = await trendQ
+  if (projectId) trendCountQ = trendCountQ.eq('project_id', projectId)
+  const { count: trendTotal } = await trendCountQ
+
+  const trendNumPages = Math.ceil((trendTotal ?? 0) / TREND_PAGE)
+  const trendOrders: Array<{ order_date: string; total_price: number; is_new_customer: boolean | null }> = []
+
+  for (let b = 0; b < trendNumPages; b += TREND_PARALLEL) {
+    const batch = Array.from(
+      { length: Math.min(TREND_PARALLEL, trendNumPages - b) },
+      (_, i) => b + i
+    )
+    const batchData = await Promise.all(
+      batch.map(p => {
+        let q = sb.from('orders')
+          .select('order_date, total_price, is_new_customer')
+          .gte('order_date', sixMonthsAgo)
+          .neq('status', 'cancelled')
+          .range(p * TREND_PAGE, (p + 1) * TREND_PAGE - 1)
+        if (projectId) q = q.eq('project_id', projectId)
+        return q.then(({ data }) => (data ?? []) as typeof trendOrders)
+      })
+    )
+    for (const page of batchData) trendOrders.push(...page)
+  }
 
   const monthMap: Record<string, { newOrders: number; newRevenue: number; repeatOrders: number; repeatRevenue: number; totalOrders: number }> = {}
   for (const o of trendOrders ?? []) {
