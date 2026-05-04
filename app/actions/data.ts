@@ -153,7 +153,7 @@ export async function deleteAttributeSchema(id: string) {
 
 export async function fetchOrders(filters: OrderFilters = {}): Promise<PaginatedResult<Order>> {
   const sb = createAdminClient()
-  const { status, projectId, dateFrom, dateTo, search, page = 1, pageSize = 50 } = filters
+  const { status, projectId, dateFrom, dateTo, search, batchId, page = 1, pageSize = 50 } = filters
 
   let q = sb
     .from('orders')
@@ -163,9 +163,14 @@ export async function fetchOrders(filters: OrderFilters = {}): Promise<Paginated
 
   if (status)    q = q.eq('status', status)
   if (projectId) q = q.eq('project_id', projectId)
-  if (dateFrom)  q = q.gte('order_date', dateFrom)
-  if (dateTo)    q = q.lte('order_date', dateTo)
-  if (search)    q = q.or(`customers.name.ilike.%${search}%,customers.phone.ilike.%${search}%`)
+  // When filtering by batch, skip date range so all orders in the batch are visible
+  if (batchId) {
+    q = q.eq('import_batch_id', batchId)
+  } else {
+    if (dateFrom) q = q.gte('order_date', dateFrom)
+    if (dateTo)   q = q.lte('order_date', dateTo)
+  }
+  if (search)    q = q.or(`tracking_number.ilike.%${search}%,customers.name.ilike.%${search}%,customers.phone.ilike.%${search}%`)
 
   const from = (page - 1) * pageSize
   q = q.range(from, from + pageSize - 1)
@@ -545,15 +550,30 @@ export async function bulkInsertOrders(
   const ids: string[] = []
   const errors: string[] = []
 
-  for (let i = 0; i < rows.length; i += 50) {
-    const batch = rows.slice(i, i + 50)
-    // Upsert with ignoreDuplicates so re-imports and partial-failure retries
-    // silently skip rows whose tracking_number already exists instead of
-    // throwing a unique-constraint violation for the whole batch.
-    const { data, error } = await sb
+  // Pre-fetch all non-null tracking numbers that already exist in the DB
+  // for this batch, then filter them out before inserting.
+  const allTracking = (rows as Array<{ tracking_number?: string | null }>)
+    .map(r => r.tracking_number)
+    .filter((t): t is string => !!t)
+
+  let existingSet = new Set<string>()
+  if (allTracking.length > 0) {
+    const { data: existing } = await sb
       .from('orders')
-      .upsert(batch, { onConflict: 'tracking_number', ignoreDuplicates: true })
-      .select('id')
+      .select('tracking_number')
+      .in('tracking_number', allTracking)
+    existingSet = new Set((existing ?? []).map((r: { tracking_number: string }) => r.tracking_number))
+  }
+
+  const newRows = rows.filter(
+    (r: any) => !r.tracking_number || !existingSet.has(r.tracking_number)
+  )
+
+  if (newRows.length === 0) return { ids: [], errors: [] }
+
+  for (let i = 0; i < newRows.length; i += 50) {
+    const batch = newRows.slice(i, i + 50)
+    const { data, error } = await sb.from('orders').insert(batch).select('id')
     if (error) {
       errors.push(`Batch ${Math.floor(i / 50) + 1}: ${error.message}`)
     } else {

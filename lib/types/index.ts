@@ -260,6 +260,7 @@ export interface OrderFilters {
   dateFrom?: string
   dateTo?: string
   search?: string
+  batchId?: string
   page?: number
   pageSize?: number
 }

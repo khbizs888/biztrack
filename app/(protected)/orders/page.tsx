@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useMemo, Fragment } from 'react'
+import { useState, useMemo, Fragment, useEffect, Suspense } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { useOrders } from '@/lib/hooks/useOrders'
 import { useProjects } from '@/lib/hooks/useProjects'
 import PageHeader from '@/components/shared/PageHeader'
@@ -109,8 +110,9 @@ function TableHeaders({ showDate = false }: { showDate?: boolean }) {
   )
 }
 
-export default function OrdersPage() {
+function OrdersPageInner() {
   useCleanupDialogArtifacts()
+  const searchParams = useSearchParams()
   const today = getToday()
   const thisWeek = getThisWeek()
 
@@ -125,6 +127,12 @@ export default function OrdersPage() {
   const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set())
   const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set())
 
+  // When ?batch=<id> is in the URL (e.g. from "View imported orders" link),
+  // activate batch filter so orders are shown regardless of date range.
+  const batchId = searchParams.get('batch') ?? undefined
+  // Clear batch filter state when URL param is removed
+  useEffect(() => { setPage(1) }, [batchId])
+
   const { projects } = useProjects()
 
   const brandProjectId = useMemo(() => {
@@ -135,18 +143,28 @@ export default function OrdersPage() {
 
   // All orders for the range — for stats, tabs, week/month views
   const { data: allData } = useOrders(
-    useMemo(() => ({ dateFrom, dateTo, pageSize: 9999, page: 1 }), [dateFrom, dateTo])
+    useMemo(() => {
+      const f: OrderFilters = { pageSize: 9999, page: 1 }
+      if (batchId) { f.batchId = batchId } else { f.dateFrom = dateFrom; f.dateTo = dateTo }
+      return f
+    }, [dateFrom, dateTo, batchId])
   )
 
   // Paginated orders — for day view table
   const { data, isLoading, error } = useOrders(
     useMemo(() => {
-      const f: OrderFilters = { dateFrom, dateTo, page, pageSize: PAGE_SIZE }
+      const f: OrderFilters = { page, pageSize: PAGE_SIZE }
+      if (batchId) {
+        f.batchId = batchId
+      } else {
+        f.dateFrom = dateFrom
+        f.dateTo = dateTo
+      }
       if (selectedBrand !== 'All' && selectedBrand !== 'Unassigned' && brandProjectId[selectedBrand])
         f.projectId = brandProjectId[selectedBrand]
       if (search.trim()) f.search = search.trim()
       return f
-    }, [dateFrom, dateTo, selectedBrand, brandProjectId, page, search])
+    }, [dateFrom, dateTo, batchId, selectedBrand, brandProjectId, page, search])
   )
 
   // Brand tab stats (count + revenue)
@@ -342,8 +360,19 @@ export default function OrdersPage() {
         </Button>
       </PageHeader>
 
+      {/* Batch import mode banner */}
+      {batchId && (
+        <div className="mb-4 flex items-center gap-3 rounded-md border border-blue-200 bg-blue-50 px-4 py-2 text-sm text-blue-800">
+          <span className="font-medium">Showing imported batch</span>
+          <span className="text-blue-500 text-xs font-mono">{batchId.slice(0, 8)}…</span>
+          <Link href="/orders" className="ml-auto text-xs text-blue-600 underline underline-offset-2">
+            Clear filter → all orders
+          </Link>
+        </div>
+      )}
+
       {/* Quick presets + custom date range */}
-      <div className="flex flex-wrap items-center gap-2 mb-4">
+      <div className={cn('flex flex-wrap items-center gap-2 mb-4', batchId && 'opacity-50 pointer-events-none')}>
         {PRESETS.map(([label, key]) => (
           <Button key={key} variant="outline" size="sm" className="h-8 text-xs" onClick={() => applyPreset(key)}>
             {label}
@@ -582,5 +611,13 @@ export default function OrdersPage() {
       <AddOrderModal open={showAddModal} onClose={() => setShowAddModal(false)} />
       <ImportOrdersModal open={showImportModal} onClose={() => setShowImportModal(false)} />
     </div>
+  )
+}
+
+export default function OrdersPage() {
+  return (
+    <Suspense fallback={null}>
+      <OrdersPageInner />
+    </Suspense>
   )
 }
