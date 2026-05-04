@@ -908,7 +908,7 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
         })
       }
 
-      const { ids: insertedIds, errors: insertErrors } = await bulkInsertOrders(toInsert)
+      const { ids: insertedIds, errors: insertErrors } = await bulkInsertOrders(toInsert, dominantProjectId)
       errorCount   += insertErrors.length
       errorDetails.push(...insertErrors)
       const successCount = insertedIds.length

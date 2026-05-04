@@ -544,24 +544,24 @@ export async function fetchExistingTrackingNumbers(trackingNumbers: string[]): P
 }
 
 export async function bulkInsertOrders(
-  rows: object[]
+  rows: object[],
+  projectId?: string | null
 ): Promise<{ ids: string[]; errors: string[] }> {
   const sb = createAdminClient()
   const ids: string[] = []
   const errors: string[] = []
 
-  // Pre-fetch all non-null tracking numbers that already exist in the DB
-  // for this batch, then filter them out before inserting.
+  // Pre-fetch tracking numbers that already exist for this project so short/
+  // numeric codes (e.g. DD "3120") don't collide with other brands.
   const allTracking = (rows as Array<{ tracking_number?: string | null }>)
     .map(r => r.tracking_number)
     .filter((t): t is string => !!t)
 
   let existingSet = new Set<string>()
   if (allTracking.length > 0) {
-    const { data: existing } = await sb
-      .from('orders')
-      .select('tracking_number')
-      .in('tracking_number', allTracking)
+    let q = sb.from('orders').select('tracking_number').in('tracking_number', allTracking)
+    if (projectId) q = q.eq('project_id', projectId)
+    const { data: existing } = await q
     existingSet = new Set((existing ?? []).map((r: { tracking_number: string }) => r.tracking_number))
   }
 
