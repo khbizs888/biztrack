@@ -386,15 +386,22 @@ export async function bulkUpsertCustomers(rows: { name: string; phone: string; a
     const deduped = Object.values(
       Object.fromEntries(withPhone.map(r => [r.phone, r]))
     )
-    const { data: upserted, error } = await sb
+    const { error } = await sb
       .from('customers')
       .upsert(
         deduped.map(r => ({ name: r.name, phone: r.phone, address: r.address ?? null })),
         { onConflict: 'phone' }
       )
-      .select('id, phone')
     if (error) throw new Error(error.message)
-    upserted?.forEach(c => { if (c.phone) map[c.phone] = c.id })
+
+    // Fetch IDs in a separate SELECT — upsert with a partial unique index can
+    // return incomplete data (rows that hit the conflict path may be omitted).
+    const phones = deduped.map(r => r.phone)
+    const { data: fetched } = await sb
+      .from('customers')
+      .select('id, phone')
+      .in('phone', phones)
+    fetched?.forEach(c => { if (c.phone) map[c.phone] = c.id })
   }
 
   // ── Customers without phone: find by name, else insert ───────────────────
@@ -559,10 +566,39 @@ export async function bulkInsertOrders(
 
   let existingSet = new Set<string>()
   if (allTracking.length > 0) {
-    let q = sb.from('orders').select('tracking_number').in('tracking_number', allTracking)
+    let q = sb.from('orders').select('tracking_number, customer_id').in('tracking_number', allTracking)
     if (projectId) q = q.eq('project_id', projectId)
     const { data: existing } = await q
-    existingSet = new Set((existing ?? []).map((r: { tracking_number: string }) => r.tracking_number))
+    existingSet = new Set(
+      (existing ?? [])
+        .map((r: { tracking_number: string; customer_id: string | null }) => r.tracking_number)
+    )
+
+    // Backfill customer_id on existing orders that are missing it.
+    // This fixes orders inserted before the bulkUpsertCustomers partial-index fix.
+    const nullCustomerSet = new Set(
+      (existing ?? [])
+        .filter((r: { tracking_number: string; customer_id: string | null }) => r.customer_id === null)
+        .map((r: { tracking_number: string; customer_id: string | null }) => r.tracking_number)
+    )
+    if (nullCustomerSet.size > 0) {
+      // Group incoming rows by customer_id so we can batch each group in one UPDATE
+      const byCustomer = new Map<string, string[]>()
+      for (const r of rows as Array<{ tracking_number?: string | null; customer_id?: string | null }>) {
+        if (r.tracking_number && r.customer_id && nullCustomerSet.has(r.tracking_number)) {
+          if (!byCustomer.has(r.customer_id)) byCustomer.set(r.customer_id, [])
+          byCustomer.get(r.customer_id)!.push(r.tracking_number)
+        }
+      }
+      for (const [cid, trackings] of Array.from(byCustomer.entries())) {
+        for (let i = 0; i < trackings.length; i += 100) {
+          await sb.from('orders')
+            .update({ customer_id: cid })
+            .in('tracking_number', trackings.slice(i, i + 100))
+            .is('customer_id', null)
+        }
+      }
+    }
   }
 
   const newRows = rows.filter(

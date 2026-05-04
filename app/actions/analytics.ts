@@ -484,12 +484,21 @@ export async function fetchCustomerInsights(
   const customerProjectData: Record<string, { spend: number; orders: number; lastOrderDate: string }> = {}
 
   if (projectId) {
+    // NOTE: console.log output appears in the server terminal (Next.js dev/prod log),
+    // NOT in the browser console — check your `npm run dev` terminal.
+    console.log('[CI] projectId received:', projectId)
+    console.log('[CI] dateFrom:', dateFrom, 'dateTo:', dateTo)
+
     const { data: projOrders } = await sb
       .from('orders')
       .select('customer_id, order_date, total_price, payment_status')
       .eq('project_id', projectId)
       .not('customer_id', 'is', null)
       .order('order_date', { ascending: true })
+      .limit(10000)
+
+    console.log('[CI] projOrders fetched:', projOrders?.length ?? 0)
+    console.log('[CI] sample projOrder:', projOrders?.[0])
 
     for (const o of projOrders ?? []) {
       const cid = o.customer_id as string
@@ -524,12 +533,42 @@ export async function fetchCustomerInsights(
     }
   }
 
-  let custQ = sb
-    .from('customers')
-    .select('id, name, phone, customer_tag, total_orders, total_spent, first_order_date, last_order_date, follow_up_date, follow_up_note')
-    .order('total_spent', { ascending: false })
-  if (brandCustomerIds !== null) custQ = custQ.in('id', brandCustomerIds)
-  const { data: customers } = await custQ
+  // Fetch customers. When brand-scoped, we have an explicit ID list which may
+  // contain 1000+ entries — passing them all in a single .in() would exceed
+  // PostgREST's URL length limit and silently return null. Chunk into ≤400-ID
+  // batches and merge in JS instead.
+  let customers: Array<{
+    id: string; name: string; phone: string;
+    customer_tag: string | null; total_orders: number | null; total_spent: number | null;
+    first_order_date: string | null; last_order_date: string | null;
+    follow_up_date: string | null; follow_up_note: string | null
+  }> = []
+
+  if (brandCustomerIds !== null) {
+    // Brand-scoped: fetch in chunks of 400
+    const CHUNK = 400
+    for (let ci = 0; ci < brandCustomerIds.length; ci += CHUNK) {
+      const chunk = brandCustomerIds.slice(ci, ci + CHUNK)
+      const { data: chunkData } = await sb
+        .from('customers')
+        .select('id, name, phone, customer_tag, total_orders, total_spent, first_order_date, last_order_date, follow_up_date, follow_up_note')
+        .in('id', chunk)
+        .limit(CHUNK)
+      if (chunkData) customers.push(...chunkData)
+    }
+    // Re-sort after merging chunks (original query sorted by total_spent DESC)
+    customers.sort((a, b) => Number(b.total_spent ?? 0) - Number(a.total_spent ?? 0))
+  } else {
+    // All brands — no ID filter needed
+    const { data } = await sb
+      .from('customers')
+      .select('id, name, phone, customer_tag, total_orders, total_spent, first_order_date, last_order_date, follow_up_date, follow_up_note')
+      .order('total_spent', { ascending: false })
+      .limit(10000)
+    customers = data ?? []
+  }
+
+  console.log('[CI] customers fetched:', customers.length)
 
   // ── Orders in date range for new-vs-repeat trend (already project-scoped) ───
   let ordQ = sb
@@ -538,8 +577,12 @@ export async function fetchCustomerInsights(
     .gte('order_date', dateFrom)
     .lte('order_date', dateTo)
     .neq('status', 'cancelled')
+    .limit(10000)
   if (projectId) ordQ = ordQ.eq('project_id', projectId)
   const { data: orders } = await ordQ
+
+  console.log('[CI] date-range orders fetched:', orders?.length ?? 0)
+  console.log('[CI] sample order:', orders?.[0])
 
   const from = parseISO(dateFrom)
   const to = parseISO(dateTo)
@@ -658,6 +701,7 @@ export async function fetchCustomerInsights(
     .select('order_date, total_price, is_new_customer')
     .gte('order_date', sixMonthsAgo)
     .neq('status', 'cancelled')
+    .limit(10000)
   if (projectId) trendQ = trendQ.eq('project_id', projectId)
   const { data: trendOrders } = await trendQ
 
