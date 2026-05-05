@@ -517,19 +517,31 @@ export async function fetchCustomerInsights(
     console.log('[CI] projectId received:', projectId)
     console.log('[CI] dateFrom:', dateFrom, 'dateTo:', dateTo)
 
-    const { data: rpcData, error: rpcError } = await sb
-      .rpc('get_brand_customers', {
-        p_project_id: projectId,
-        p_date_from:  dateFrom,
-        p_date_to:    dateTo,
-      })
+    // PostgREST applies max_rows to RPC results just like table queries.
+    // Paginate with .range() until we get a short page (last page).
+    const RPC_PAGE = 1000
+    let rpcPage = 0
+    while (true) {
+      const { data, error } = await sb
+        .rpc('get_brand_customers', {
+          p_project_id: projectId,
+          p_date_from:  dateFrom,
+          p_date_to:    dateTo,
+        })
+        .range(rpcPage * RPC_PAGE, (rpcPage + 1) * RPC_PAGE - 1)
 
-    if (rpcError) {
-      console.error('[CI] get_brand_customers RPC error:', rpcError.message)
+      if (error) {
+        console.error('[CI] get_brand_customers RPC error:', error.message)
+        break
+      }
+      const page = (data ?? []) as BrandCustRow[]
+      console.log(`[CI] RPC page ${rpcPage}: ${page.length} rows, total so far: ${brandRpcRows.length + page.length}`)
+      brandRpcRows.push(...page)
+      if (page.length < RPC_PAGE) break
+      rpcPage++
     }
 
-    brandRpcRows = (rpcData ?? []) as BrandCustRow[]
-    console.log('[CI] brand customers from RPC:', brandRpcRows.length)
+    console.log('[CI] brand customers from RPC (total):', brandRpcRows.length)
 
     for (const r of brandRpcRows) {
       if (r.brand_first_order_date) brandFirstOrderDate[r.id] = r.brand_first_order_date
@@ -561,7 +573,7 @@ export async function fetchCustomerInsights(
 
   // ── Customers list: brand-scoped uses RPC rows; all-brands paginates ─────────
   const CUST_SELECT = 'id, name, phone, customer_tag, total_orders, total_spent, first_order_date, last_order_date, follow_up_date, follow_up_note'
-  const CUST_PAGE = 100
+  const CUST_PAGE = 1000
   let customers: CustRow[] = []
 
   if (brandCustomerIds !== null) {
@@ -581,6 +593,7 @@ export async function fetchCustomerInsights(
       if (pageData.length < CUST_PAGE) break
       custPage++
     }
+    console.log('[CI] all-brands customers fetched:', customers.length)
   }
 
   console.log('[CI] customers fetched:', customers.length)

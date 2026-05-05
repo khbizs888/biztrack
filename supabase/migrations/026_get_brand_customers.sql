@@ -9,9 +9,14 @@
 --     within the requested date range (for VIP/dormant checks).
 --   • range_last_order_date   – latest order date in the range.
 --
--- Using an RPC bypasses PostgREST max_rows completely, so it
--- returns all matching customers in a single round-trip regardless
--- of how large the result set is.
+-- SECURITY DEFINER so the function runs with the privileges of
+-- the definer (postgres/service role) and bypasses RLS.
+-- SET statement_timeout prevents long-running queries from
+-- being killed by the default 8s timeout.
+-- GRANT ensures all Supabase roles can call it.
+--
+-- The client still paginates with .range() to bypass PostgREST
+-- max_rows on the RPC result set.
 -- ============================================================
 
 CREATE OR REPLACE FUNCTION get_brand_customers(
@@ -37,6 +42,8 @@ RETURNS TABLE (
 )
 LANGUAGE sql
 STABLE
+SECURITY DEFINER
+SET statement_timeout = '30s'
 AS $$
   SELECT
     c.id,
@@ -91,5 +98,8 @@ AS $$
 
   ORDER BY c.total_spent DESC NULLS LAST
 $$;
+
+GRANT EXECUTE ON FUNCTION get_brand_customers(uuid, date, date)
+  TO anon, authenticated, service_role;
 
 NOTIFY pgrst, 'reload schema';
