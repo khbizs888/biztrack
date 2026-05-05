@@ -5,12 +5,11 @@ import { useQuery } from '@tanstack/react-query'
 import { useCleanupDialogArtifacts } from '@/lib/hooks/use-cleanup-dialog-artifacts'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { BRANDS, BRAND_COLORS } from '@/lib/constants'
 import { cn } from '@/lib/utils'
 import { Upload, BarChart3, Megaphone, Users, Target } from 'lucide-react'
-import { subDays, format, startOfMonth, endOfMonth } from 'date-fns'
+import { subDays, format } from 'date-fns'
+import DateRangePicker from '@/components/shared/DateRangePicker'
 import SalesOverviewTab from './_components/SalesOverviewTab'
 import AdPerformanceTab from './_components/AdPerformanceTab'
 import CustomerInsightsTab from './_components/CustomerInsightsTab'
@@ -24,13 +23,6 @@ const TAB_CONFIG = [
   { id: 'ads' as Tab, label: 'Ad Performance', icon: Megaphone },
   { id: 'customers' as Tab, label: 'Customer Insights', icon: Users },
   { id: 'goals' as Tab, label: 'Goal Tracking', icon: Target },
-]
-
-const QUICK_RANGES = [
-  { label: 'Last 7d', days: 7 },
-  { label: 'Last 30d', days: 30 },
-  { label: 'This Month', preset: 'this_month' as const },
-  { label: 'Last Month', preset: 'last_month' as const },
 ]
 
 export default function AnalyticsPage() {
@@ -56,20 +48,6 @@ export default function AnalyticsPage() {
   const projectId = selectedBrand
     ? (projects.find(p => p.name === selectedBrand || p.code === selectedBrand)?.id ?? '')
     : ''
-
-  function applyQuickRange(opt: { days?: number; preset?: 'this_month' | 'last_month' }) {
-    if (opt.preset === 'this_month') {
-      setDateFrom(format(startOfMonth(today), 'yyyy-MM-dd'))
-      setDateTo(format(today, 'yyyy-MM-dd'))
-    } else if (opt.preset === 'last_month') {
-      const lm = new Date(today.getFullYear(), today.getMonth() - 1, 1)
-      setDateFrom(format(startOfMonth(lm), 'yyyy-MM-dd'))
-      setDateTo(format(endOfMonth(lm), 'yyyy-MM-dd'))
-    } else if (opt.days) {
-      setDateFrom(format(subDays(today, opt.days - 1), 'yyyy-MM-dd'))
-      setDateTo(format(today, 'yyyy-MM-dd'))
-    }
-  }
 
   return (
     <div className="space-y-0">
@@ -117,26 +95,12 @@ export default function AnalyticsPage() {
         </div>
 
         {/* Date range */}
-        <div className="flex flex-wrap items-end gap-2">
-          <div>
-            <Label className="text-xs mb-1 block">From</Label>
-            <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="h-8 w-36 text-sm" />
-          </div>
-          <div>
-            <Label className="text-xs mb-1 block">To</Label>
-            <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="h-8 w-36 text-sm" />
-          </div>
-          <div className="flex gap-1.5 flex-wrap">
-            {QUICK_RANGES.map(r => (
-              <button
-                key={r.label}
-                onClick={() => applyQuickRange(r)}
-                className="h-8 px-3 rounded-md text-xs border border-border hover:bg-muted transition-colors"
-              >
-                {r.label}
-              </button>
-            ))}
-          </div>
+        <div className="flex items-center gap-2">
+          <DateRangePicker
+            dateFrom={dateFrom}
+            dateTo={dateTo}
+            onChange={(f, t) => { setDateFrom(f); setDateTo(t) }}
+          />
         </div>
 
         {/* Tab navigation */}

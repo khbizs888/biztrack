@@ -13,7 +13,8 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { formatCurrency, formatDate } from '@/lib/utils'
-import { Plus, ShoppingCart, Download, FileUp, History, Calendar, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-react'
+import { Plus, ShoppingCart, Download, FileUp, History, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-react'
+import DateRangePicker from '@/components/shared/DateRangePicker'
 import type { OrderFilters, Order } from '@/lib/types'
 import { exportOrders } from '@/lib/export-utils'
 import { useCleanupDialogArtifacts } from '@/lib/hooks/use-cleanup-dialog-artifacts'
@@ -378,20 +379,11 @@ function OrdersPageInner() {
             {label}
           </Button>
         ))}
-        <div className="flex items-center gap-1.5 ml-1">
-          <Calendar className="h-4 w-4 text-muted-foreground shrink-0" />
-          <input
-            type="date" value={dateFrom}
-            onChange={e => { setDateFrom(e.target.value); setPage(1) }}
-            className="h-8 rounded-md border border-input bg-background px-2 py-1 text-xs shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
-          />
-          <span className="text-muted-foreground text-xs">–</span>
-          <input
-            type="date" value={dateTo}
-            onChange={e => { setDateTo(e.target.value); setPage(1) }}
-            className="h-8 rounded-md border border-input bg-background px-2 py-1 text-xs shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
-          />
-        </div>
+        <DateRangePicker
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+          onChange={(f, t) => { setDateFrom(f); setDateTo(t); setPage(1) }}
+        />
       </div>
 
       {/* View mode toggle + day navigation + search */}

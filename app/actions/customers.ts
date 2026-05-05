@@ -2,6 +2,80 @@
 
 import { createAdminClient } from '@/lib/supabase/admin'
 
+// ─── Phone Lookup ─────────────────────────────────────────────────────────────
+
+export type PhoneLookupResult =
+  | { found: false }
+  | {
+      found: true
+      id: string
+      name: string
+      phone: string
+      customerTag: string | null
+      totalOrders: number
+      totalSpent: number
+      firstOrderDate: string | null
+      lastOrderDate: string | null
+      byBrand: { brand: string; orders: number; spent: number }[]
+    }
+
+function normalizePhone(raw: string): string {
+  let s = raw.replace(/[\s\-\(\)\+]/g, '')
+  // Fix scientific notation from Excel
+  if (/^\d+\.?\d*[eE][+\-]?\d+$/.test(s)) {
+    s = Math.round(parseFloat(s)).toString()
+  }
+  if (s.startsWith('60')) return s
+  if (s.startsWith('0'))  return '6' + s
+  if (s.startsWith('1') && s.length === 9) return '60' + s
+  return s
+}
+
+export async function lookupCustomerByPhone(rawPhone: string): Promise<PhoneLookupResult> {
+  const phone = normalizePhone(rawPhone.trim())
+  if (phone.length < 8) return { found: false }
+
+  const sb = createAdminClient()
+
+  const { data: customer } = await sb
+    .from('customers')
+    .select('id, name, phone, customer_tag, total_orders, total_spent, first_order_date, last_order_date')
+    .eq('phone', phone)
+    .maybeSingle()
+
+  if (!customer) return { found: false }
+
+  // Fetch all orders with project info to group by brand
+  const { data: orders } = await sb
+    .from('orders')
+    .select('total_price, projects(name, code)')
+    .eq('customer_id', customer.id)
+    .neq('status', 'cancelled')
+
+  const byBrandMap: Record<string, { orders: number; spent: number }> = {}
+  for (const o of orders ?? []) {
+    const brand = (o.projects as { name?: string; code?: string } | null)?.code ?? 'Other'
+    if (!byBrandMap[brand]) byBrandMap[brand] = { orders: 0, spent: 0 }
+    byBrandMap[brand].orders++
+    byBrandMap[brand].spent += Number(o.total_price ?? 0)
+  }
+
+  return {
+    found:         true,
+    id:            customer.id,
+    name:          customer.name,
+    phone:         customer.phone,
+    customerTag:   customer.customer_tag,
+    totalOrders:   Number(customer.total_orders ?? 0),
+    totalSpent:    Number(customer.total_spent  ?? 0),
+    firstOrderDate: customer.first_order_date,
+    lastOrderDate:  customer.last_order_date,
+    byBrand: Object.entries(byBrandMap)
+      .sort((a, b) => b[1].spent - a[1].spent)
+      .map(([brand, v]) => ({ brand, ...v })),
+  }
+}
+
 // ─── Upload customer receipt ──────────────────────────────────────────────────
 
 export async function uploadCustomerReceipt(
