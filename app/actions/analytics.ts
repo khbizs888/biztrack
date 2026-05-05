@@ -509,42 +509,42 @@ export async function fetchCustomerInsights(
   }
 
   let brandCustomerIds: string[] | null = null
-  const brandFirstOrderDate: Record<string, string> = {}
   const customerProjectData: Record<string, { spend: number; orders: number; lastOrderDate: string }> = {}
+  let firstOrderMap = new Map<string, string>()
   let brandRpcRows: BrandCustRow[] = []
 
   if (projectId) {
     console.log('[CI] projectId received:', projectId)
     console.log('[CI] dateFrom:', dateFrom, 'dateTo:', dateTo)
 
-    // PostgREST applies max_rows to RPC results just like table queries.
-    // Paginate with .range() until we get a short page (last page).
-    const RPC_PAGE = 1000
-    let rpcPage = 0
+    // Paginate using SQL-level LIMIT/OFFSET so PostgREST row caps
+    // never truncate the function's result set mid-page.
+    const PAGE_SIZE = 1000
+    let offset = 0
     while (true) {
       const { data, error } = await sb
         .rpc('get_brand_customers', {
           p_project_id: projectId,
           p_date_from:  dateFrom,
           p_date_to:    dateTo,
+          p_limit:      PAGE_SIZE,
+          p_offset:     offset,
         })
-        .range(rpcPage * RPC_PAGE, (rpcPage + 1) * RPC_PAGE - 1)
 
       if (error) {
         console.error('[CI] get_brand_customers RPC error:', error.message)
         break
       }
       const page = (data ?? []) as BrandCustRow[]
-      console.log(`[CI] RPC page ${rpcPage}: ${page.length} rows, total so far: ${brandRpcRows.length + page.length}`)
+      console.log(`[CI] offset ${offset}: ${page.length} rows, total so far: ${brandRpcRows.length + page.length}`)
       brandRpcRows.push(...page)
-      if (page.length < RPC_PAGE) break
-      rpcPage++
+      if (page.length < PAGE_SIZE) break
+      offset += PAGE_SIZE
     }
 
     console.log('[CI] brand customers from RPC (total):', brandRpcRows.length)
 
     for (const r of brandRpcRows) {
-      if (r.brand_first_order_date) brandFirstOrderDate[r.id] = r.brand_first_order_date
       customerProjectData[r.id] = {
         spend:         Number(r.range_spend   ?? 0),
         orders:        Number(r.range_orders  ?? 0),
@@ -552,6 +552,17 @@ export async function fetchCustomerInsights(
       }
     }
     brandCustomerIds = brandRpcRows.map(r => r.id)
+
+    // All-time first order date per customer — used to determine genuine
+    // "new in range" status independent of the selected date filter.
+    const { data: firstOrderRows } = await sb
+      .rpc('get_customer_first_orders', { p_project_id: projectId })
+    firstOrderMap = new Map<string, string>(
+      (firstOrderRows ?? []).map(
+        (r: { customer_id: string; first_order_date: string }) =>
+          [r.customer_id, r.first_order_date] as [string, string]
+      )
+    )
 
     if (brandCustomerIds.length === 0) {
       const emptyDays = eachDayOfInterval({ start: parseISO(dateFrom), end: parseISO(dateTo) })
@@ -668,8 +679,8 @@ export async function fetchCustomerInsights(
   // For all-brands view, falls back to global first_order_date vs current month.
   const newThisMonth = projectId
     ? brandRpcRows.filter(r => {
-        const d = r.brand_first_order_date
-        return d && d >= dateFrom && d <= dateTo
+        const firstDate = firstOrderMap.get(r.id)
+        return firstDate != null && firstDate >= dateFrom && firstDate <= dateTo
       }).length
     : all.filter(c => {
         const fod = c.first_order_date

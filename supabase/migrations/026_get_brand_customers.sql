@@ -22,7 +22,9 @@
 CREATE OR REPLACE FUNCTION get_brand_customers(
   p_project_id       uuid,
   p_date_from        date,
-  p_date_to          date
+  p_date_to          date,
+  p_limit            int  DEFAULT 1000,
+  p_offset           int  DEFAULT 0
 )
 RETURNS TABLE (
   id                    uuid,
@@ -97,9 +99,11 @@ AS $$
   ) ro ON ro.customer_id = c.id
 
   ORDER BY c.total_spent DESC NULLS LAST
+  LIMIT  p_limit
+  OFFSET p_offset
 $$;
 
-GRANT EXECUTE ON FUNCTION get_brand_customers(uuid, date, date)
+GRANT EXECUTE ON FUNCTION get_brand_customers(uuid, date, date, int, int)
   TO anon, authenticated, service_role;
 
 NOTIFY pgrst, 'reload schema';
