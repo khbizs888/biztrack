@@ -535,7 +535,8 @@ export async function fetchCustomerInsights(
         console.error('[CI] get_brand_customers RPC error:', error.message)
         break
       }
-      const page = (data ?? []) as BrandCustRow[]
+      if (!data || (data as BrandCustRow[]).length === 0) break
+      const page = data as BrandCustRow[]
       console.log(`[CI] offset ${offset}: ${page.length} rows, total so far: ${brandRpcRows.length + page.length}`)
       brandRpcRows.push(...page)
       if (page.length < PAGE_SIZE) break
