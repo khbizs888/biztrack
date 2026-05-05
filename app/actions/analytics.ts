@@ -610,18 +610,39 @@ export async function fetchCustomerInsights(
     // Brand-scoped: customers were fetched in batches above
     customers = brandRpcRows as CustRow[]
   } else {
-    // All-brands: paginate the whole customers table
-    let custPage = 0
+    // All-brands: first collect customer IDs from orders in the date range,
+    // then batch-fetch profiles — same pattern as brand-scoped but without
+    // project_id filter.
+    type AllBrandsOrder = { customer_id: string }
+    const allBrandsOrders: AllBrandsOrder[] = []
+    let abOffset = 0
     while (true) {
-      const { data: pageData } = await sb
+      const { data, error } = await sb
+        .from('orders')
+        .select('customer_id')
+        .gte('order_date', dateFrom)
+        .lte('order_date', dateTo)
+        .neq('status', 'cancelled')
+        .not('customer_id', 'is', null)
+        .range(abOffset, abOffset + CUST_PAGE - 1)
+      if (error || !data || data.length === 0) break
+      allBrandsOrders.push(...(data as AllBrandsOrder[]))
+      if (data.length < CUST_PAGE) break
+      abOffset += CUST_PAGE
+    }
+
+    const allBrandsIds = Array.from(new Set(allBrandsOrders.map(r => r.customer_id)))
+    console.log(`[CI] all-brands unique customers in range: ${allBrandsIds.length}`)
+
+    const AB_BATCH = 100
+    for (let i = 0; i < allBrandsIds.length; i += AB_BATCH) {
+      const batch = allBrandsIds.slice(i, i + AB_BATCH)
+      const { data, error } = await sb
         .from('customers')
         .select(CUST_SELECT)
-        .order('total_spent', { ascending: false })
-        .range(custPage * CUST_PAGE, (custPage + 1) * CUST_PAGE - 1)
-      if (!pageData || pageData.length === 0) break
-      customers.push(...(pageData as CustRow[]))
-      if (pageData.length < CUST_PAGE) break
-      custPage++
+        .in('id', batch)
+      if (error) { console.error('[CI] all-brands customer batch error:', error.message); continue }
+      if (data) customers.push(...(data as CustRow[]))
     }
     console.log('[CI] all-brands customers fetched:', customers.length)
   }
@@ -703,7 +724,7 @@ export async function fetchCustomerInsights(
       }).length
     : all.filter(c => {
         const fod = c.first_order_date
-        return fod && fod >= monthStart && fod <= monthEnd
+        return fod && fod >= dateFrom && fod <= dateTo
       }).length
 
   // Tag breakdown
