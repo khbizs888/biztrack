@@ -511,59 +511,53 @@ export async function fetchCustomerInsights(
   let brandCustomerIds: string[] | null = null
   const customerProjectData: Record<string, { spend: number; orders: number; lastOrderDate: string }> = {}
   let firstOrderMap = new Map<string, string>()
-  let brandRpcRows: BrandCustRow[] = []
+  let brandRpcRows: CustRow[] = []
 
   if (projectId) {
     console.log('[CI] projectId received:', projectId)
     console.log('[CI] dateFrom:', dateFrom, 'dateTo:', dateTo)
 
-    // Paginate using SQL-level LIMIT/OFFSET so PostgREST row caps
-    // never truncate the function's result set mid-page.
-    const PAGE_SIZE = 1000
-    let offset = 0
+    // Fetch all orders for this brand+date range in 500-row pages so
+    // PostgREST max_rows never truncates a page.  Derive unique customer
+    // IDs and per-customer range metrics directly from the order rows.
+    type RangeOrder = {
+      customer_id: string; order_date: string
+      total_price: number; payment_status: string | null
+    }
+    const rangeOrdersForBrand: RangeOrder[] = []
+    let roidOffset = 0
+    const ROID_PAGE = 500
     while (true) {
       const { data, error } = await sb
-        .rpc('get_brand_customers', {
-          p_project_id: projectId,
-          p_date_from:  dateFrom,
-          p_date_to:    dateTo,
-          p_limit:      PAGE_SIZE,
-          p_offset:     offset,
-        })
-
-      if (error) {
-        console.error('[CI] get_brand_customers RPC error:', error.message)
-        break
-      }
-      if (!data || (data as BrandCustRow[]).length === 0) break
-      const page = data as BrandCustRow[]
-      console.log(`[CI] offset ${offset}: ${page.length} rows, total so far: ${brandRpcRows.length + page.length}`)
-      brandRpcRows.push(...page)
-      if (page.length < PAGE_SIZE) break
-      offset += PAGE_SIZE
+        .from('orders')
+        .select('customer_id, order_date, total_price, payment_status')
+        .eq('project_id', projectId)
+        .gte('order_date', dateFrom)
+        .lte('order_date', dateTo)
+        .neq('status', 'cancelled')
+        .not('customer_id', 'is', null)
+        .range(roidOffset, roidOffset + ROID_PAGE - 1)
+      if (error || !data || data.length === 0) break
+      rangeOrdersForBrand.push(...(data as RangeOrder[]))
+      console.log(`[CI] order page offset ${roidOffset}: ${data.length} orders`)
+      if (data.length < ROID_PAGE) break
+      roidOffset += ROID_PAGE
     }
 
-    console.log('[CI] brand customers from RPC (total):', brandRpcRows.length)
-
-    for (const r of brandRpcRows) {
-      customerProjectData[r.id] = {
-        spend:         Number(r.range_spend   ?? 0),
-        orders:        Number(r.range_orders  ?? 0),
-        lastOrderDate: r.range_last_order_date ?? r.last_order_date ?? '',
+    // Unique customer IDs + per-customer range metrics from order rows
+    const customerIdSet = new Set<string>()
+    for (const o of rangeOrdersForBrand) {
+      const cid = o.customer_id
+      customerIdSet.add(cid)
+      if (!customerProjectData[cid]) customerProjectData[cid] = { spend: 0, orders: 0, lastOrderDate: '' }
+      customerProjectData[cid].orders++
+      if (o.payment_status === 'Settled') customerProjectData[cid].spend += Number(o.total_price ?? 0)
+      if (!customerProjectData[cid].lastOrderDate || o.order_date > customerProjectData[cid].lastOrderDate) {
+        customerProjectData[cid].lastOrderDate = o.order_date
       }
     }
-    brandCustomerIds = brandRpcRows.map(r => r.id)
-
-    // All-time first order date per customer — used to determine genuine
-    // "new in range" status independent of the selected date filter.
-    const { data: firstOrderRows } = await sb
-      .rpc('get_customer_first_orders', { p_project_id: projectId })
-    firstOrderMap = new Map<string, string>(
-      (firstOrderRows ?? []).map(
-        (r: { customer_id: string; first_order_date: string }) =>
-          [r.customer_id, r.first_order_date] as [string, string]
-      )
-    )
+    brandCustomerIds = Array.from(customerIdSet)
+    console.log(`[CI] unique customers in range: ${brandCustomerIds.length}`)
 
     if (brandCustomerIds.length === 0) {
       const emptyDays = eachDayOfInterval({ start: parseISO(dateFrom), end: parseISO(dateTo) })
@@ -581,6 +575,30 @@ export async function fetchCustomerInsights(
         monthlyTrend: [],
       })
     }
+
+    // All-time first order date per customer — for "new in range" status
+    const { data: firstOrderRows } = await sb
+      .rpc('get_customer_first_orders', { p_project_id: projectId })
+    firstOrderMap = new Map<string, string>(
+      (firstOrderRows ?? []).map(
+        (r: { customer_id: string; first_order_date: string }) =>
+          [r.customer_id, r.first_order_date] as [string, string]
+      )
+    )
+
+    // Fetch customer profiles in batches of 100 to avoid URL length limits
+    const CUST_BATCH = 100
+    const BRAND_CUST_SELECT = 'id, name, phone, customer_tag, total_orders, total_spent, first_order_date, last_order_date, follow_up_date, follow_up_note'
+    for (let i = 0; i < brandCustomerIds.length; i += CUST_BATCH) {
+      const batch = brandCustomerIds.slice(i, i + CUST_BATCH)
+      const { data, error } = await sb
+        .from('customers')
+        .select(BRAND_CUST_SELECT)
+        .in('id', batch)
+      if (error) { console.error('[CI] customer batch error:', error.message); continue }
+      if (data) brandRpcRows.push(...(data as CustRow[]))
+    }
+    console.log('[CI] brand customers fetched:', brandRpcRows.length)
   }
 
   // ── Customers list: brand-scoped uses RPC rows; all-brands paginates ─────────
@@ -589,7 +607,7 @@ export async function fetchCustomerInsights(
   let customers: CustRow[] = []
 
   if (brandCustomerIds !== null) {
-    // RPC already returned all the data — just use it directly
+    // Brand-scoped: customers were fetched in batches above
     customers = brandRpcRows as CustRow[]
   } else {
     // All-brands: paginate the whole customers table
