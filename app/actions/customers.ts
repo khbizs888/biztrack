@@ -11,6 +11,7 @@ export type PhoneLookupResult =
       id: string
       name: string
       phone: string
+      address: string | null
       customerTag: string | null
       totalOrders: number
       totalSpent: number
@@ -39,7 +40,7 @@ export async function lookupCustomerByPhone(rawPhone: string): Promise<PhoneLook
 
   const { data: customer } = await sb
     .from('customers')
-    .select('id, name, phone, customer_tag, total_orders, total_spent, first_order_date, last_order_date')
+    .select('id, name, phone, address, customer_tag, total_orders, total_spent, first_order_date, last_order_date')
     .eq('phone', phone)
     .maybeSingle()
 
@@ -65,6 +66,7 @@ export async function lookupCustomerByPhone(rawPhone: string): Promise<PhoneLook
     id:            customer.id,
     name:          customer.name,
     phone:         customer.phone,
+    address:       (customer as any).address ?? null,
     customerTag:   customer.customer_tag,
     totalOrders:   Number(customer.total_orders ?? 0),
     totalSpent:    Number(customer.total_spent  ?? 0),

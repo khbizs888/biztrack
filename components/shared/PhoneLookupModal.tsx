@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Phone, X, CheckCircle2, XCircle, Loader2 } from 'lucide-react'
+import { Phone, X, CheckCircle2, XCircle, Loader2, Copy, Check, MessageCircle } from 'lucide-react'
 import { lookupCustomerByPhone, type PhoneLookupResult } from '@/app/actions/customers'
 import { formatCurrency } from '@/lib/utils'
 import { BRAND_COLORS } from '@/lib/constants'
@@ -31,6 +31,7 @@ export default function PhoneLookupModal() {
   const [phone,   setPhone]   = useState('')
   const [loading, setLoading] = useState(false)
   const [result,  setResult]  = useState<PhoneLookupResult | null>(null)
+  const [copied,  setCopied]  = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -85,6 +86,21 @@ export default function PhoneLookupModal() {
     setPhone('')
     setResult(null)
     setLoading(false)
+    setCopied(false)
+  }
+
+  function handleCopy(found: Extract<PhoneLookupResult, { found: true }>) {
+    const lines = [found.name, `No Tel: ${found.phone}`]
+    if (found.address) lines.push(`Address: ${found.address}`)
+    navigator.clipboard.writeText(lines.join('\n')).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
+  function handleWhatsApp(found: Extract<PhoneLookupResult, { found: true }>) {
+    const name = encodeURIComponent(found.name)
+    window.open(`https://wa.me/${found.phone}?text=Hi%20${name}`, '_blank')
   }
 
   if (!open) {
@@ -159,40 +175,37 @@ export default function PhoneLookupModal() {
 
         {!loading && result !== null && (
           <div className="px-5 pb-5 space-y-3">
-            {/* Eligibility banner */}
             {found ? (
-              <div className="flex items-center gap-3 rounded-xl px-4 py-3.5 bg-green-500 text-white">
-                <CheckCircle2 className="h-6 w-6 shrink-0" />
-                <div>
-                  <p className="text-lg font-extrabold tracking-wide">ELIGIBLE ✅</p>
-                  <p className="text-sm opacity-90">Has purchase record • 有购买记录</p>
-                </div>
-              </div>
-            ) : (
-              <div className="flex items-center gap-3 rounded-xl px-4 py-3.5 bg-gray-200 text-gray-700">
-                <XCircle className="h-6 w-6 shrink-0" />
-                <div>
-                  <p className="text-lg font-extrabold tracking-wide">NOT ELIGIBLE ❌</p>
-                  <p className="text-sm">No purchase record found for this number</p>
-                  <p className="text-xs opacity-75">此号码没有购买记录</p>
-                </div>
-              </div>
-            )}
-
-            {/* Customer details */}
-            {found && (
               <div className="rounded-xl border bg-muted/30 overflow-hidden">
-                {/* Name row */}
-                <div className="px-4 py-3 border-b flex items-center justify-between gap-3">
-                  <div>
-                    <p className="font-bold text-base">{found.name}</p>
-                    <p className="text-xs text-muted-foreground font-mono mt-0.5">{found.phone}</p>
+                {/* Name + phone */}
+                <div className="px-4 pt-4 pb-3 border-b">
+                  <p className="font-bold text-lg leading-tight">{found.name}</p>
+                  <p className="text-sm text-muted-foreground font-mono mt-0.5">{found.phone}</p>
+                </div>
+
+                {/* Brand badges */}
+                {found.byBrand.length > 0 && (
+                  <div className="px-4 py-2.5 border-b flex flex-wrap gap-1.5">
+                    {found.byBrand.map(b => {
+                      const color = BRAND_COLORS[b.brand]
+                      return (
+                        <span key={b.brand} className={`text-xs px-2 py-0.5 rounded-full border font-medium ${color ? `${color.bg} ${color.text} ${color.border}` : 'bg-gray-100 text-gray-700 border-gray-200'}`}>
+                          {b.brand} · {b.orders}
+                        </span>
+                      )
+                    })}
                   </div>
-                  {found.customerTag && (
-                    <span className={`text-xs px-2.5 py-1 rounded-full border font-semibold shrink-0 ${TAG_BADGE[found.customerTag] ?? 'bg-gray-100 text-gray-700 border-gray-200'}`}>
-                      {found.customerTag}
-                    </span>
-                  )}
+                )}
+
+                {/* Eligibility badge */}
+                <div className="px-4 py-3 border-b">
+                  <div className="flex items-center gap-2 rounded-lg px-3 py-2.5 bg-green-500 text-white">
+                    <CheckCircle2 className="h-5 w-5 shrink-0" />
+                    <div>
+                      <p className="font-extrabold tracking-wide text-sm">ELIGIBLE ✅</p>
+                      <p className="text-xs opacity-90">Has purchase record • 有购买记录</p>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Stats grid */}
@@ -217,26 +230,41 @@ export default function PhoneLookupModal() {
                   </div>
                 </div>
 
-                {/* By brand */}
-                {found.byBrand.length > 0 && (
-                  <div className="px-4 py-3 border-t">
-                    <p className="text-xs font-medium text-muted-foreground mb-2">Purchases by Brand</p>
-                    <div className="space-y-1.5">
-                      {found.byBrand.map(b => {
-                        const color = BRAND_COLORS[b.brand]
-                        return (
-                          <div key={b.brand} className="flex items-center gap-2">
-                            <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${color ? `${color.bg} ${color.text} ${color.border}` : 'bg-gray-100 text-gray-700 border-gray-200'}`}>
-                              {b.brand}
-                            </span>
-                            <span className="text-xs text-muted-foreground">{b.orders} order{b.orders !== 1 ? 's' : ''}</span>
-                            <span className="text-xs font-medium ml-auto">{formatCurrency(b.spent)}</span>
-                          </div>
-                        )
-                      })}
-                    </div>
+                {/* Customer tag */}
+                {found.customerTag && (
+                  <div className="px-4 py-2.5 border-t">
+                    <span className={`text-xs px-2.5 py-1 rounded-full border font-semibold ${TAG_BADGE[found.customerTag] ?? 'bg-gray-100 text-gray-700 border-gray-200'}`}>
+                      {found.customerTag}
+                    </span>
                   </div>
                 )}
+
+                {/* Divider + action buttons */}
+                <div className="border-t px-4 py-3 flex gap-2">
+                  <button
+                    onClick={() => handleCopy(found)}
+                    className="flex-1 flex items-center justify-center gap-1.5 h-9 rounded-lg border bg-background hover:bg-muted transition-colors text-sm font-medium"
+                  >
+                    {copied ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
+                    {copied ? 'Copied! ✓' : 'Copy Details'}
+                  </button>
+                  <button
+                    onClick={() => handleWhatsApp(found)}
+                    className="flex-1 flex items-center justify-center gap-1.5 h-9 rounded-lg bg-green-500 hover:bg-green-600 transition-colors text-white text-sm font-medium"
+                  >
+                    <MessageCircle className="h-4 w-4" />
+                    WhatsApp
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-3 rounded-xl px-4 py-3.5 bg-gray-200 text-gray-700">
+                <XCircle className="h-6 w-6 shrink-0" />
+                <div>
+                  <p className="text-lg font-extrabold tracking-wide">NOT ELIGIBLE ❌</p>
+                  <p className="text-sm">No purchase record found for this number</p>
+                  <p className="text-xs opacity-75">此号码没有购买记录</p>
+                </div>
               </div>
             )}
           </div>

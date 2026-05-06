@@ -119,6 +119,8 @@ export interface CustomerInsightsData {
   customerLtv: number
   retentionRate: number
   retentionDays: number
+  newCount: number
+  retentionCount: number
   monthlyTrend: { month: string; newAov: number; repeatAov: number; retentionRate: number }[]
 }
 
@@ -572,6 +574,8 @@ export async function fetchCustomerInsights(
         customerLtv: 0,
         retentionRate: 0,
         retentionDays,
+        newCount: 0,
+        retentionCount: 0,
         monthlyTrend: [],
       })
     }
@@ -778,14 +782,20 @@ export async function fetchCustomerInsights(
     ? all.reduce((s, c) => s + Number(c.total_spent ?? 0), 0) / total
     : 0
 
-  // ── Retention Rate: customers with 2+ orders AND last order within retentionDays
-  const retentionCutoff = format(subDays(today, retentionDays), 'yyyy-MM-dd')
-  const retainedCount = all.filter(c =>
-    (c.total_orders ?? 0) >= 2 &&
-    c.last_order_date != null &&
-    c.last_order_date >= retentionCutoff
-  ).length
-  const retentionRate = safeDivide(retainedCount, total) * 100
+  // ── Retention Rate: returning customers (first order BEFORE period) ÷ total in period
+  const newCount = all.filter(c => {
+    const firstDate = projectId
+      ? (firstOrderMap.get(c.id) ?? dateFrom)
+      : (c.first_order_date ?? dateFrom)
+    return firstDate >= dateFrom
+  }).length
+  const retentionCount = all.filter(c => {
+    const firstDate = projectId
+      ? (firstOrderMap.get(c.id) ?? dateFrom)
+      : (c.first_order_date ?? dateFrom)
+    return firstDate < dateFrom
+  }).length
+  const retentionRate = total > 0 ? (retentionCount / total) * 100 : 0
 
   // ── Monthly trend: last 6 months using is_new_customer on orders ─────────────
   const sixMonthsAgo = format(subMonths(today, 6), 'yyyy-MM-dd')
@@ -864,6 +874,8 @@ export async function fetchCustomerInsights(
     customerLtv,
     retentionRate,
     retentionDays,
+    newCount,
+    retentionCount,
     monthlyTrend,
   })
 }

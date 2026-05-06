@@ -316,7 +316,7 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo, selec
         {[
           { filter: 'all' as DrillFilter,          label: 'Total Customers',  value: data.total.toLocaleString(),      color: 'text-foreground',      icon: Users,    accent: '' },
           { filter: 'new_month' as DrillFilter,    label: 'New This Month',   value: String(data.newThisMonth),        color: 'text-green-600',       icon: UserPlus, accent: 'hover:ring-green-200' },
-          { filter: 'repeat' as DrillFilter,       label: 'Repeat Rate',      value: `${data.repeatRate.toFixed(1)}%`, color: 'text-blue-600',        icon: Repeat2,  accent: 'hover:ring-blue-200' },
+          { filter: 'repeat' as DrillFilter,       label: 'Retention Rate',   value: `${data.retentionRate.toFixed(1)}%`, color: 'text-blue-600',        icon: Repeat2,  accent: 'hover:ring-blue-200' },
           { filter: 'vip' as DrillFilter,          label: 'VIP Customers',    value: String(data.vipCount),            color: 'text-purple-600',      icon: Star,     accent: 'hover:ring-purple-200' },
           { filter: 'dormant_lost' as DrillFilter, label: 'Dormant / Lost',   value: String(data.dormantCount),        color: 'text-orange-600',      icon: Clock,    accent: 'hover:ring-orange-200' },
         ].map(({ filter, label, value, color, icon: Icon, accent }) => (
@@ -338,6 +338,39 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo, selec
           </Card>
         ))}
       </div>
+
+      {/* New vs Retention Counts */}
+      <div className="grid grid-cols-2 gap-4">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
+            <CardTitle className="text-xs font-medium text-muted-foreground">New Customers</CardTitle>
+            <UserPlus className="h-3.5 w-3.5 text-green-600" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-green-600">{data.newCount}</div>
+            <p className="text-xs text-muted-foreground mt-0.5">First-time buyers in period</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
+            <CardTitle className="text-xs font-medium text-muted-foreground">Retention Customers</CardTitle>
+            <Repeat2 className="h-3.5 w-3.5 text-blue-600" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-blue-600">{data.retentionCount}</div>
+            <p className="text-xs text-muted-foreground mt-0.5">Returning buyers in period</p>
+          </CardContent>
+        </Card>
+      </div>
+      {data.total > 0 && (
+        <p className="text-xs text-muted-foreground -mt-2 px-1">
+          New : Retention = <span className="font-semibold text-foreground">{data.newCount} : {data.retentionCount}</span>
+          <span className="ml-2 text-muted-foreground">
+            ({data.total > 0 ? ((data.newCount / data.total) * 100).toFixed(0) : 0}% new,{' '}
+            {data.total > 0 ? ((data.retentionCount / data.total) * 100).toFixed(0) : 0}% returning)
+          </span>
+        </p>
+      )}
 
       {/* AOV / LTV / Retention KPI Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -374,7 +407,7 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo, selec
           </CardHeader>
           <CardContent>
             <div className="text-xl font-bold text-orange-600">{data.retentionRate.toFixed(1)}%</div>
-            <p className="text-xs text-muted-foreground mt-0.5">Repeat within {data.retentionDays}d</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Returning ÷ total in period</p>
           </CardContent>
         </Card>
       </div>
