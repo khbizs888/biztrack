@@ -79,3 +79,35 @@ export async function togglePackageStatus(id: string, isActive: boolean): Promis
   const { error } = await sb.from('packages').update({ is_active: isActive }).eq('id', id)
   if (error) throw new Error(error.message)
 }
+
+/**
+ * Returns a map of packageId → custom_attributes (component quantities)
+ * for all packages belonging to the given brand code (e.g. 'DD', 'NE').
+ * Used by the export layer to fill per-package product quantity columns.
+ */
+export async function fetchPackageComponents(
+  brandCode: string,
+): Promise<Record<string, Record<string, number>>> {
+  const sb = createAdminClient()
+
+  const { data: project } = await sb
+    .from('projects')
+    .select('id')
+    .eq('code', brandCode)
+    .single()
+
+  if (!project) return {}
+
+  const { data: packages, error } = await sb
+    .from('packages')
+    .select('id, custom_attributes')
+    .eq('project_id', project.id)
+
+  if (error) throw new Error(error.message)
+
+  const map: Record<string, Record<string, number>> = {}
+  for (const pkg of packages ?? []) {
+    map[pkg.id] = (pkg.custom_attributes as Record<string, number>) ?? {}
+  }
+  return map
+}

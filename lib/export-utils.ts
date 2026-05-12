@@ -101,13 +101,54 @@ export function exportKHHFIOR(orders: OrderWithDetails[], brand: string, filenam
   XLSX.writeFile(wb, filename ?? `${brand}_orders_${todayStr()}.xlsx`)
 }
 
+// ─── Product columns: DD & NE (CTG Databees template) ────────────────────────
+
+/** Maps component_registry.json_key → CTG Databees column header */
+const DD_PRODUCT_COLUMNS: { jsonKey: string; header: string }[] = [
+  { jsonKey: 'dd_bottle_amount',    header: 'Phytomineral Drink 500ML' },
+  { jsonKey: 'dd_boxes',            header: 'Phytomineral DIAMOND DRINK 25MLX10 SACHETS (BOX)' },
+  { jsonKey: 'cactus_gel_l_bottle', header: '330ml Dhealthy Cactus Gel' },
+  { jsonKey: 'cactus_gel_s_bottle', header: "D'HEALTHY CACTUS GEL 60ML" },
+  { jsonKey: 'dd_sachet',           header: '25gm PhytoMineral Sachet' },
+  { jsonKey: 'coin',                header: 'DHEALTHY RECYCLE BAG - FOC' },
+]
+
+const NE_PRODUCT_COLUMNS: { jsonKey: string; header: string }[] = [
+  { jsonKey: 'ne_boxes',   header: 'NUTRIEYE 20 X 2GM' },
+  { jsonKey: 'ne_sachet',  header: 'NUTRIEYE SACHET 2GM -FOC' },
+]
+
 // ─── Format B: DD, NE, Juji ───────────────────────────────────────────────────
 
-export function exportDDNEJuji(orders: OrderWithDetails[], brand: string, filename?: string): void {
+export function exportDDNEJuji(
+  orders: OrderWithDetails[],
+  brand: string,
+  filename?: string,
+  componentMap?: Record<string, Record<string, number>>,
+): void {
+  const productCols =
+    brand === 'DD'  ? DD_PRODUCT_COLUMNS :
+    brand === 'NE'  ? NE_PRODUCT_COLUMNS :
+    []
+
   const rows = orders.map(o => {
     const c = o.customers
     const isCod = o.is_cod ?? false
     const projectName = o.projects?.name ?? brand
+
+    // Look up component quantities: prefer package_id lookup, fall back to snapshot attrs
+    const pkgAttrs: Record<string, number> =
+      (o.package_id && componentMap?.[o.package_id]) ||
+      ((o.package_snapshot as any)?.custom_attributes) ||
+      {}
+
+    // Build product quantity columns
+    const productQtyCols: Record<string, number | string> = {}
+    for (const { jsonKey, header } of productCols) {
+      const qty = pkgAttrs[jsonKey]
+      productQtyCols[header] = (qty != null && qty > 0) ? qty : ''
+    }
+
     return {
       'Order No':       o.tracking_number ?? o.id,
       'Project':        projectName,
@@ -123,6 +164,7 @@ export function exportDDNEJuji(orders: OrderWithDetails[], brand: string, filena
       'Grand Total':    Number(o.total_price),   // number → right-aligned
       'Payment Method': isCod ? 'COD' : 'Bank Transfer',
       'Remark':         getOrderNotes(o),
+      ...productQtyCols,
       'Receipt':        c?.receipt_url ?? '',
     }
   })
@@ -139,7 +181,10 @@ export function exportDDNEJuji(orders: OrderWithDetails[], brand: string, filena
     }
   })
 
-  ws['!cols'] = colWidths([22, 15, 18, 14, 12, 22, 16, 35, 10, 12, 12, 12, 14, 25, 40])
+  // Base 15 columns + product columns + receipt
+  const baseWidths = [22, 15, 18, 14, 12, 22, 16, 35, 10, 12, 12, 12, 14, 25]
+  const productWidths = productCols.map(() => 16)
+  ws['!cols'] = colWidths([...baseWidths, ...productWidths, 40])
 
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, 'Orders')
@@ -300,10 +345,15 @@ export function exportSingleCustomer(
 
 const KHH_FIOR_BRANDS = ['KHH', 'FIOR']
 
-export function exportOrders(orders: OrderWithDetails[], brand: string, filename?: string): void {
+export function exportOrders(
+  orders: OrderWithDetails[],
+  brand: string,
+  filename?: string,
+  componentMap?: Record<string, Record<string, number>>,
+): void {
   if (KHH_FIOR_BRANDS.includes(brand)) {
     exportKHHFIOR(orders, brand, filename)
   } else {
-    exportDDNEJuji(orders, brand, filename)
+    exportDDNEJuji(orders, brand, filename, componentMap)
   }
 }

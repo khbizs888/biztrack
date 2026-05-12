@@ -17,6 +17,7 @@ import { Plus, ShoppingCart, Download, FileUp, History, ChevronLeft, ChevronRigh
 import DateRangePicker from '@/components/shared/DateRangePicker'
 import type { OrderFilters, Order } from '@/lib/types'
 import { exportOrders } from '@/lib/export-utils'
+import { fetchPackageComponents } from '@/app/actions/catalog'
 import { useCleanupDialogArtifacts } from '@/lib/hooks/use-cleanup-dialog-artifacts'
 import AddOrderModal from '@/components/modules/orders/AddOrderModal'
 import ImportOrdersModal from '@/components/modules/orders/ImportOrdersModal'
@@ -285,8 +286,12 @@ function OrdersPageInner() {
     setExpandedOrders(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
   }
 
-  function handleExport() {
-    exportOrders(filteredOrders, selectedBrand)
+  async function handleExport() {
+    let componentMap: Record<string, Record<string, number>> | undefined
+    if (selectedBrand === 'DD' || selectedBrand === 'NE') {
+      try { componentMap = await fetchPackageComponents(selectedBrand) } catch { /* best-effort */ }
+    }
+    exportOrders(filteredOrders, selectedBrand, undefined, componentMap)
   }
 
   // Render order rows (main + expandable detail) — returns array for flatMap
