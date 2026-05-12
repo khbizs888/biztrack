@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { updateOrder } from '@/app/actions/data'
-import { setCustomerReceiptUrl, removeCustomerReceipt } from '@/app/actions/customers'
+import { setCustomerReceiptUrl, removeCustomerReceipt, updateCustomerName } from '@/app/actions/customers'
 import { createClient } from '@/lib/supabase/client'
 import { useProjects, type Package } from '@/lib/hooks/useProjects'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -34,6 +34,7 @@ export default function EditOrderModal({ order, onClose }: Props) {
   const [loading, setLoading] = useState(false)
   const { projects } = useProjects()
 
+  const [customerName, setCustomerName] = useState('')
   const [date, setDate]             = useState('')
   const [tracking, setTracking]     = useState('')
   const [projectId, setProjectId]   = useState('')
@@ -62,6 +63,7 @@ export default function EditOrderModal({ order, onClose }: Props) {
 
   useEffect(() => {
     if (!order) return
+    setCustomerName((order.customers as any)?.name ?? '')
     setDate(order.order_date ?? '')
     setTracking(order.tracking_number ?? '')
     setProjectId(order.project_id ?? '')
@@ -190,6 +192,10 @@ export default function EditOrderModal({ order, onClose }: Props) {
       })
 
       const customerId = order.customer_id
+      if (customerId && customerName.trim() && customerName.trim() !== ((order.customers as any)?.name ?? '')) {
+        await updateCustomerName(customerId, customerName.trim())
+      }
+
       if (customerId && isReceiptBrand) {
         if (receiptUrl && receiptUrl !== originalReceiptUrl) {
           // New image uploaded — save URL
@@ -217,6 +223,16 @@ export default function EditOrderModal({ order, onClose }: Props) {
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader><DialogTitle>Edit Order</DialogTitle></DialogHeader>
         <div className="space-y-3">
+          {/* Customer Name */}
+          <div className="space-y-1">
+            <Label className="text-xs">Customer Name</Label>
+            <Input
+              value={customerName}
+              onChange={e => setCustomerName(e.target.value)}
+              placeholder="Customer name"
+            />
+          </div>
+
           {/* Date + Tracking */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">

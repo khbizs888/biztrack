@@ -136,6 +136,20 @@ export async function setCustomerReceiptUrl(
   if (error) throw new Error('Failed to update customer: ' + error.message)
 }
 
+// ─── Update customer name ─────────────────────────────────────────────────────
+
+export async function updateCustomerName(
+  customerId: string,
+  name: string,
+): Promise<void> {
+  const supabase = createAdminClient()
+  const { error } = await supabase
+    .from('customers')
+    .update({ name })
+    .eq('id', customerId)
+  if (error) throw new Error('Failed to update customer name: ' + error.message)
+}
+
 // ─── Remove customer receipt ──────────────────────────────────────────────────
 
 export async function removeCustomerReceipt(
