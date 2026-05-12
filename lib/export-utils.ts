@@ -127,14 +127,36 @@ export function exportDDNEJuji(
   componentMap?: Record<string, Record<string, number>>,
 ): void {
   const productCols =
-    brand === 'DD'  ? DD_PRODUCT_COLUMNS :
-    brand === 'NE'  ? NE_PRODUCT_COLUMNS :
+    brand === 'DD' ? DD_PRODUCT_COLUMNS :
+    brand === 'NE' ? NE_PRODUCT_COLUMNS :
     []
 
-  const rows = orders.map(o => {
+  // Build headers as an explicit ordered array
+  const headers = [
+    'Order No',
+    'Project',
+    'Shopee Order No',
+    'Unique Id',
+    'Order Date',
+    'Receiver Name',
+    'Full Phone No',
+    'Address Line 1',
+    'Postal Code',
+    'City',
+    'State',
+    'Grand Total',
+    'Payment Method',
+    'Remark',
+    'Receipt',
+    ...productCols.map(p => p.header),
+  ]
+
+  // Build data rows as arrays in the same column order
+  const dataRows = orders.map(o => {
     const c = o.customers
     const isCod = o.is_cod ?? false
     const projectName = o.projects?.name ?? brand
+    const shopeeOrderNo = (o.channel === 'Shopee' || o.channel === 'Shopee SG') ? (o.tracking_number ?? '') : ''
 
     // Look up component quantities: prefer package_id lookup, fall back to snapshot attrs
     const pkgAttrs: Record<string, number> =
@@ -142,38 +164,36 @@ export function exportDDNEJuji(
       ((o.package_snapshot as any)?.custom_attributes) ||
       {}
 
-    // Build product quantity columns
-    const productQtyCols: Record<string, number | string> = {}
-    for (const { jsonKey, header } of productCols) {
+    const productQtys = productCols.map(({ jsonKey }) => {
       const qty = pkgAttrs[jsonKey]
-      productQtyCols[header] = (qty != null && qty > 0) ? qty : ''
-    }
+      return (qty != null && qty > 0) ? qty : ''
+    })
 
-    return {
-      'Order No':       o.tracking_number ?? o.id,
-      'Project':        projectName,
-      'Shopee Order No': (o.channel === 'Shopee' || o.channel === 'Shopee SG') ? (o.tracking_number ?? '') : '',
-      'Unique Id':      '',
-      'Order Date':     o.order_date ?? '',
-      'Receiver Name':  c?.name ?? '',
-      'Full Phone No':  c?.phone ?? '',          // string → type 's'
-      'Address Line 1': c?.address ?? '',
-      'Postal Code':    '',
-      'City':           o.state ?? '',
-      'State':          o.state ?? '',
-      'Grand Total':    Number(o.total_price),   // number → right-aligned
-      'Payment Method': isCod ? 'COD' : 'Bank Transfer',
-      'Remark':         getOrderNotes(o),
-      ...productQtyCols,
-      'Receipt':        c?.receipt_url ?? '',
-    }
+    return [
+      o.tracking_number ?? o.id,          // Order No
+      projectName,                         // Project
+      shopeeOrderNo,                       // Shopee Order No
+      '',                                  // Unique Id
+      o.order_date ?? '',                  // Order Date
+      c?.name ?? '',                       // Receiver Name
+      c?.phone ?? '',                      // Full Phone No  ← kept as string
+      c?.address ?? '',                    // Address Line 1
+      '',                                  // Postal Code
+      o.state ?? '',                       // City
+      o.state ?? '',                       // State
+      Number(o.total_price),               // Grand Total
+      isCod ? 'COD' : 'Bank Transfer',    // Payment Method
+      getOrderNotes(o),                    // Remark
+      c?.receipt_url ?? '',               // Receipt
+      ...productQtys,                      // Product quantity columns
+    ]
   })
 
-  const ws = XLSX.utils.json_to_sheet(rows)
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows])
 
   // Force phone column (index 6) cells to text type
   const phoneCol = 6
-  rows.forEach((_, i) => {
+  dataRows.forEach((_, i) => {
     const addr = XLSX.utils.encode_cell({ r: i + 1, c: phoneCol })
     if (ws[addr] && ws[addr].v !== '') {
       ws[addr].t = 's'
@@ -181,10 +201,10 @@ export function exportDDNEJuji(
     }
   })
 
-  // Base 15 columns + product columns + receipt
-  const baseWidths = [22, 15, 18, 14, 12, 22, 16, 35, 10, 12, 12, 12, 14, 25]
+  // 15 base columns + product columns
+  const baseWidths = [22, 15, 18, 14, 12, 22, 16, 35, 10, 12, 12, 12, 14, 25, 40]
   const productWidths = productCols.map(() => 16)
-  ws['!cols'] = colWidths([...baseWidths, ...productWidths, 40])
+  ws['!cols'] = colWidths([...baseWidths, ...productWidths])
 
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, 'Orders')
