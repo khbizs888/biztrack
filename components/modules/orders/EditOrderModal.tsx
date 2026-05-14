@@ -21,6 +21,12 @@ import type { Order } from '@/lib/types'
 const CHANNELS = ['Facebook', 'TikTok', 'Shopee', 'Lazada', 'Xiaohongshu', 'WhatsApp', 'Website', 'Other']
 const RECEIPT_BRANDS = ['NE', 'DD', 'Juji']
 
+const DD_PURCHASE_REASONS = [
+  '眼袋/黑眼圈', '斑斑', '美白提亮', '毛孔', '只想保养', '皮肤敏感/痒',
+  '糖尿伤口', '开刀伤口', '伤口', '牛皮癣', '湿疹', '三高', '其他',
+  '紧致', '疤痕', '富贵手', '皮肤问题 风膜',
+]
+
 interface Props { order: Order | null; onClose: () => void }
 
 export default function EditOrderModal({ order, onClose }: Props) {
@@ -79,6 +85,7 @@ export default function EditOrderModal({ order, onClose }: Props) {
   const projectPackages: Package[] = projects.find(p => p.id === projectId)?.packages ?? []
   const selectedProject = projects.find(p => p.id === projectId)
   const isReceiptBrand = RECEIPT_BRANDS.includes(selectedProject?.name ?? '')
+  const isDD = selectedProject?.name === 'DD'
 
   async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -118,8 +125,9 @@ export default function EditOrderModal({ order, onClose }: Props) {
       setReceiptUrl(publicUrl)
       setReceiptFilePath(path)
       setReceiptRemoved(false)
-    } catch {
-      setUploadError('Upload failed, try again')
+    } catch (err: any) {
+      console.error('[EditOrderModal] receipt upload error:', err)
+      setUploadError(err?.message ?? 'Upload failed, try again')
     } finally {
       setUploading(false)
     }
@@ -320,13 +328,24 @@ export default function EditOrderModal({ order, onClose }: Props) {
           {/* Purchase Reason */}
           <div className="space-y-1">
             <Label className="text-xs">Purchase Reason 购买原因</Label>
-            <textarea
-              value={purchaseReason}
-              onChange={e => setPurchaseReason(e.target.value)}
-              rows={2}
-              placeholder="e.g. Weight loss"
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-ring"
-            />
+            {isDD ? (
+              <select
+                value={purchaseReason}
+                onChange={e => setPurchaseReason(e.target.value)}
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring h-9"
+              >
+                <option value="">Select reason...</option>
+                {DD_PURCHASE_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+            ) : (
+              <textarea
+                value={purchaseReason}
+                onChange={e => setPurchaseReason(e.target.value)}
+                rows={2}
+                placeholder="e.g. Weight loss"
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-ring"
+              />
+            )}
           </div>
 
           {/* Notes / Remark */}

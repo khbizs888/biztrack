@@ -21,6 +21,12 @@ import { BRAND_COLORS } from '@/lib/constants'
 
 const AUTO_ID_PROJECTS = ['DD', 'Juji', 'NE', 'FIOR', 'KHH']
 
+const DD_PURCHASE_REASONS = [
+  '眼袋/黑眼圈', '斑斑', '美白提亮', '毛孔', '只想保养', '皮肤敏感/痒',
+  '糖尿伤口', '开刀伤口', '伤口', '牛皮癣', '湿疹', '三高', '其他',
+  '紧致', '疤痕', '富贵手', '皮肤问题 风膜',
+]
+
 const CHANNELS = [
   'FB', 'WhatsApp', 'Shopee', 'FB ENG', 'Lazada', 'Staff', 'WhatsApp ENG', 'Shopee SG',
 ] as const
@@ -342,15 +348,28 @@ export default function AddOrderModal({ open, onClose }: Props) {
           {/* ── Section 3: Additional ─────────────────────────────────── */}
           <SectionLabel>Additional</SectionLabel>
 
-          {/* Remark */}
+          {/* Purchase Reason / Remark */}
           <div className="space-y-1">
-            <Label>Remark</Label>
-            <textarea
-              {...register('purchase_reason')}
-              rows={2}
-              placeholder="Optional remark…"
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-ring"
-            />
+            <Label>Purchase Reason</Label>
+            {selectedProject?.name === 'DD' ? (
+              <Controller name="purchase_reason" control={control} render={({ field }) => (
+                <select
+                  value={field.value ?? ''}
+                  onChange={e => field.onChange(e.target.value)}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring h-9"
+                >
+                  <option value="">Select reason...</option>
+                  {DD_PURCHASE_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
+                </select>
+              )} />
+            ) : (
+              <textarea
+                {...register('purchase_reason')}
+                rows={2}
+                placeholder="Optional remark…"
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-ring"
+              />
+            )}
           </div>
 
           <div className="flex justify-end gap-2 pt-2">
