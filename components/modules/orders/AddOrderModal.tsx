@@ -21,11 +21,22 @@ import { BRAND_COLORS } from '@/lib/constants'
 
 const AUTO_ID_PROJECTS = ['DD', 'Juji', 'NE', 'FIOR', 'KHH']
 
-const DD_PURCHASE_REASONS = [
-  '眼袋/黑眼圈', '斑斑', '美白提亮', '毛孔', '只想保养', '皮肤敏感/痒',
-  '糖尿伤口', '开刀伤口', '伤口', '牛皮癣', '湿疹', '三高', '其他',
-  '紧致', '疤痕', '富贵手', '皮肤问题 风膜',
-]
+const PURCHASE_REASONS: Record<string, string[]> = {
+  DD: [
+    '眼袋/黑眼圈', '斑斑', '美白提亮', '毛孔', '只想保养', '皮肤敏感/痒',
+    '糖尿伤口', '开刀伤口', '伤口', '牛皮癣', '湿疹', '三高', '其他',
+    '紧致', '疤痕', '富贵手', '皮肤问题 风膜',
+  ],
+  Juji: [
+    '备孕', '姨妈问题（量少）', 'PCOS多囊', '贫血/气血不足', '更年期',
+    '保养身体', '量少', '迟到', '燥热 盗汗',
+  ],
+  FIOR: [
+    '洗头/梳头掉多', '头顶发缝宽/发际线后移', '产前产后脱发', '头皮出油/扁塌',
+    '保养、想养厚发量', '全都有', 'Alopecia', '头皮出油导致脱发',
+    '1级', '2级', '3级', '4级', '5级', '6级',
+  ],
+}
 
 const CHANNELS = [
   'FB', 'WhatsApp', 'Shopee', 'FB ENG', 'Lazada', 'Staff', 'WhatsApp ENG', 'Shopee SG',
@@ -351,7 +362,7 @@ export default function AddOrderModal({ open, onClose }: Props) {
           {/* Purchase Reason / Remark */}
           <div className="space-y-1">
             <Label>Purchase Reason</Label>
-            {selectedProject?.name === 'DD' ? (
+            {selectedProject && PURCHASE_REASONS[selectedProject.name] ? (
               <Controller name="purchase_reason" control={control} render={({ field }) => (
                 <select
                   value={field.value ?? ''}
@@ -359,7 +370,7 @@ export default function AddOrderModal({ open, onClose }: Props) {
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring h-9"
                 >
                   <option value="">Select reason...</option>
-                  {DD_PURCHASE_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
+                  {PURCHASE_REASONS[selectedProject.name].map(r => <option key={r} value={r}>{r}</option>)}
                 </select>
               )} />
             ) : (
