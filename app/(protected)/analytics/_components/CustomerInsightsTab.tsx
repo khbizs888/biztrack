@@ -375,15 +375,6 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo, selec
             <p className="text-xs text-muted-foreground mt-0.5">Avg lifetime value</p>
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
-            <CardTitle className="text-xs font-medium text-muted-foreground">Retention Rate</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-xl font-bold text-orange-600">{data.retentionRate.toFixed(1)}%</div>
-            <p className="text-xs text-muted-foreground mt-0.5">Returning ÷ total in period</p>
-          </CardContent>
-        </Card>
       </div>
 
       {/* Monthly AOV & Retention Trend */}
