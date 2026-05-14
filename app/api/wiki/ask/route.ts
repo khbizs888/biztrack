@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
+import { listWikiNodes, getDocumentContent } from '@/lib/lark'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-
-const LARK_MCP_URL = process.env.LARK_MCP_URL ?? 'https://open.larksuite.com/mcp'
-const LARK_APP_TOKEN = process.env.LARK_APP_TOKEN ?? ''
 
 export async function POST(req: NextRequest) {
   try {
@@ -13,40 +11,56 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Question is required' }, { status: 400 })
     }
 
-    const mcpServers: Anthropic.Beta.BetaRequestMCPServerURLDefinition[] = [
-      {
-        type: 'url',
-        url: LARK_MCP_URL,
-        name: 'lark',
-        ...(LARK_APP_TOKEN ? { authorization_token: LARK_APP_TOKEN } : {}),
-      },
-    ]
+    // Fetch all wiki nodes and find the most relevant ones by keyword matching
+    const allNodes = await listWikiNodes()
 
-    const response = await (client.beta.messages as any).create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1024,
-      system: 'You are a BizOS SOP assistant for Hoho Wellness. Answer based only on the Lark Wiki content provided. If the answer is not in the wiki, say so clearly. When citing information, mention the wiki page title.',
-      messages: [{ role: 'user', content: question.trim() }],
-      betas: ['mcp-client-2025-04-04'],
-      mcp_servers: mcpServers,
-    })
+    const q = question.toLowerCase()
+    const keywords = q.split(/\s+/).filter((w: string) => w.length > 2)
 
-    // Extract text content from response
-    let answer = ''
-    let source: string | undefined
+    // Score nodes by how many question keywords appear in the title
+    const scored = allNodes
+      .map(n => ({
+        ...n,
+        score: keywords.filter((k: string) => n.title.toLowerCase().includes(k)).length,
+      }))
+      .sort((a, b) => b.score - a.score)
 
-    for (const block of response.content) {
-      if (block.type === 'text') {
-        answer += block.text
-      } else if (block.type === 'tool_result') {
-        // Extract source page title from MCP tool results if available
-        const resultContent = typeof block.content === 'string' ? block.content : JSON.stringify(block.content)
-        const titleMatch = resultContent.match(/"title"\s*:\s*"([^"]+)"/)
-        if (titleMatch) source = titleMatch[1]
+    // Take up to 3 most relevant nodes (or first 3 if no title match)
+    const candidates = scored.slice(0, 3).filter(n => n.obj_token)
+
+    // Fetch content for each candidate
+    const contexts: { title: string; content: string }[] = []
+    for (const node of candidates) {
+      try {
+        const content = await getDocumentContent(node.obj_token)
+        if (content.trim()) contexts.push({ title: node.title, content: content.trim() })
+      } catch {
+        // skip pages we can't read
       }
     }
 
-    if (!answer) answer = 'I could not find relevant information in the wiki for your question.'
+    const contextBlock = contexts.length > 0
+      ? contexts.map(c => `## ${c.title}\n\n${c.content}`).join('\n\n---\n\n')
+      : 'No wiki content available.'
+
+    // Ask Claude with the fetched content as context
+    const response = await client.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1024,
+      system: `You are a BizOS SOP assistant for Hoho Wellness. Answer based only on the wiki content provided below. If the answer is not in the provided content, say so clearly. When citing information, mention the wiki page title.
+
+Wiki content:
+${contextBlock}`,
+      messages: [{ role: 'user', content: question.trim() }],
+    })
+
+    const answer = response.content
+      .filter(b => b.type === 'text')
+      .map(b => (b as Anthropic.TextBlock).text)
+      .join('')
+      || 'I could not find relevant information in the wiki for your question.'
+
+    const source = contexts[0]?.title
 
     return NextResponse.json({ answer, source })
   } catch (e: any) {

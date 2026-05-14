@@ -64,7 +64,7 @@ export default function WikiPage() {
   const [selectedNode, setSelectedNode]   = useState('')
   const [editInstruction, setEditInstruction] = useState('')
   const [editLoading, setEditLoading]     = useState(false)
-  const [draft, setDraft] = useState<{ before: string; after: string; nodeToken: string } | null>(null)
+  const [draft, setDraft] = useState<{ before: string; after: string; documentId: string } | null>(null)
   const [applying, setApplying] = useState(false)
 
   useEffect(() => {
@@ -116,7 +116,7 @@ export default function WikiPage() {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'Request failed')
-      setDraft({ before: data.before, after: data.after, nodeToken: selectedNode })
+      setDraft({ before: data.before, after: data.after, documentId: data.documentId })
     } catch (e: any) {
       toast.error(e.message ?? 'Failed to generate draft')
     } finally {
@@ -131,7 +131,7 @@ export default function WikiPage() {
       const res = await fetch('/api/wiki/edit-apply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nodeToken: draft.nodeToken, content: draft.after }),
+        body: JSON.stringify({ documentId: draft.documentId, content: draft.after }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'Request failed')

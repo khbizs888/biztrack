@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
+import { resolveNodeToDocId, getDocumentContent } from '@/lib/lark'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-
-const LARK_MCP_URL = process.env.LARK_MCP_URL ?? 'https://open.larksuite.com/mcp'
-const LARK_APP_TOKEN = process.env.LARK_APP_TOKEN ?? ''
 
 export async function POST(req: NextRequest) {
   try {
@@ -13,58 +11,30 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'nodeToken and instruction are required' }, { status: 400 })
     }
 
-    const mcpServers: Anthropic.Beta.BetaRequestMCPServerURLDefinition[] = [
-      {
-        type: 'url',
-        url: LARK_MCP_URL,
-        name: 'lark',
-        ...(LARK_APP_TOKEN ? { authorization_token: LARK_APP_TOKEN } : {}),
-      },
-    ]
+    // Resolve node token → document id, then fetch content
+    const documentId = await resolveNodeToDocId(nodeToken)
+    const originalContent = await getDocumentContent(documentId)
 
-    // Step 1: Fetch current page content via AI + Lark MCP
-    const fetchResponse = await (client.beta.messages as any).create({
+    // Ask Claude to apply the requested change
+    const response = await client.messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 2048,
-      system: 'You are a wiki editor assistant. Use the lark MCP tools to fetch the raw text content of the specified wiki page. Return ONLY the raw page content, nothing else.',
+      system: 'You are a wiki editor assistant for Hoho Wellness SOPs. Apply the requested change to the wiki content. Return ONLY the full updated content with the change applied — no commentary, no markdown code fences.',
       messages: [
         {
           role: 'user',
-          content: `Fetch the full text content of the wiki page with node_token: ${nodeToken}. Use lark:docx_v1_document_rawContent or lark:wiki_v2_space_getNode to retrieve it. Return only the raw page text.`,
+          content: `Current wiki content:\n\n${originalContent}\n\n---\n\nRequested change: ${instruction.trim()}\n\nReturn the complete updated content.`,
         },
       ],
-      betas: ['mcp-client-2025-04-04'],
-      mcp_servers: mcpServers,
     })
 
-    let originalContent = ''
-    for (const block of fetchResponse.content) {
-      if (block.type === 'text') originalContent += block.text
-    }
-    originalContent = originalContent.trim()
+    const proposedContent = response.content
+      .filter(b => b.type === 'text')
+      .map(b => (b as Anthropic.TextBlock).text)
+      .join('')
+      .trim()
 
-    // Step 2: Generate proposed edit
-    const editResponse = await (client.beta.messages as any).create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 2048,
-      system: 'You are a wiki editor assistant for Hoho Wellness SOPs. Apply the requested change to the wiki content. Return ONLY the full updated content, no commentary or markdown code fences.',
-      messages: [
-        {
-          role: 'user',
-          content: `Current wiki content:\n\n${originalContent}\n\n---\n\nRequested change: ${instruction.trim()}\n\nReturn the complete updated content with the change applied.`,
-        },
-      ],
-      betas: ['mcp-client-2025-04-04'],
-      mcp_servers: mcpServers,
-    })
-
-    let proposedContent = ''
-    for (const block of editResponse.content) {
-      if (block.type === 'text') proposedContent += block.text
-    }
-    proposedContent = proposedContent.trim()
-
-    return NextResponse.json({ before: originalContent, after: proposedContent })
+    return NextResponse.json({ before: originalContent.trim(), after: proposedContent, documentId })
   } catch (e: any) {
     console.error('[wiki/edit-draft]', e)
     return NextResponse.json({ error: e.message ?? 'Internal error' }, { status: 500 })
