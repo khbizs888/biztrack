@@ -26,8 +26,8 @@ const PAYMENT_METHODS = [
   'TOUCH N GO E WALLET', 'ATOME', 'LAZADA', 'SHOPEE', 'UOB BANK (SGD)',
   'NINJA VAN - COD', 'SINGAPORE - COD', 'PAYNOW - SINGAPORE', 'BILLPLZ', 'SINGAPORE JNT',
 ]
-const COD_METHODS = new Set(['DHL ECOMMERCE - COD', 'NINJA VAN - COD', 'SINGAPORE - COD'])
 const COD_REMARK = 'COD, call or Whatsapp customer 30 mins before arriving'
+const isCodMethod = (v: string) => v.toUpperCase().includes('COD')
 
 const PURCHASE_REASONS: Record<string, string[]> = {
   DD: [
@@ -374,7 +374,7 @@ export default function AddOrderModal({ open, onClose }: Props) {
             const currentRemark = watch('remark')
             function handlePaymentChange(setter: (v: string) => void, v: string) {
               setter(v)
-              if (COD_METHODS.has(v) && !currentRemark) setValue('remark', COD_REMARK)
+              if (isCodMethod(v) && !currentRemark) setValue('remark', COD_REMARK)
             }
             return (
               <div className="grid grid-cols-2 gap-3">

@@ -26,8 +26,8 @@ const PAYMENT_METHODS = [
   'TOUCH N GO E WALLET', 'ATOME', 'LAZADA', 'SHOPEE', 'UOB BANK (SGD)',
   'NINJA VAN - COD', 'SINGAPORE - COD', 'PAYNOW - SINGAPORE', 'BILLPLZ', 'SINGAPORE JNT',
 ]
-const COD_METHODS = new Set(['DHL ECOMMERCE - COD', 'NINJA VAN - COD', 'SINGAPORE - COD'])
 const COD_REMARK = 'COD, call or Whatsapp customer 30 mins before arriving'
+const isCodMethod = (v: string) => v.toUpperCase().includes('COD')
 
 const PURCHASE_REASONS: Record<string, string[]> = {
   DD: [
@@ -344,7 +344,7 @@ export default function EditOrderModal({ order, onClose }: Props) {
                 onChange={e => {
                   const v = e.target.value
                   setPaymentMethod1(v)
-                  if (COD_METHODS.has(v) && !remark) setRemark(COD_REMARK)
+                  if (isCodMethod(v) && !remark) setRemark(COD_REMARK)
                 }}
                 className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring h-9"
               >
@@ -358,7 +358,7 @@ export default function EditOrderModal({ order, onClose }: Props) {
                 onChange={e => {
                   const v = e.target.value
                   setPaymentMethod2(v)
-                  if (COD_METHODS.has(v) && !remark) setRemark(COD_REMARK)
+                  if (isCodMethod(v) && !remark) setRemark(COD_REMARK)
                 }}
                 className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring h-9"
               >

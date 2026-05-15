@@ -31,6 +31,13 @@ function todayStr(): string {
   return new Date().toISOString().split('T')[0]
 }
 
+/** Strip Malaysian 60 prefix → 0xxxxxxx. Singapore (65) numbers export unchanged. */
+function formatPhoneExport(phone: string | null | undefined): string {
+  if (!phone) return ''
+  if (phone.startsWith('60')) return '0' + phone.slice(2)
+  return phone
+}
+
 function getOrderRemark(order: Order): string {
   return (order as any).remark ?? ''
 }
@@ -53,7 +60,7 @@ export function exportKHHFIOR(orders: OrderWithDetails[], brand: string, filenam
       '付款时间':    o.order_date ?? '',
       '买家ID':      '',
       '收件人姓名':  c?.name ?? '',
-      '收件人手机号吗': c?.phone ?? '',        // string → SheetJS stores as type 's'
+      '收件人手机号吗': formatPhoneExport(c?.phone),  // string → SheetJS stores as type 's'
       '收件人电子邮箱': '',
       '收件人地址 1': c?.address ?? '',
       '收件人地址2':  '',
@@ -176,7 +183,7 @@ export function exportDDNEJuji(
       '',                                  // Unique Id
       o.order_date ?? '',                  // Order Date
       c?.name ?? '',                       // Receiver Name
-      c?.phone ?? '',                      // Full Phone No  ← kept as string
+      formatPhoneExport(c?.phone),          // Full Phone No  ← kept as string
       c?.address ?? '',                    // Address Line 1
       '',                                  // Postal Code
       o.state ?? '',                       // City
