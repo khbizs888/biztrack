@@ -444,6 +444,7 @@ export async function fetchCustomerInsights(
   projectId: string,
   dateFrom: string,
   dateTo: string,
+  phoneOnly = false,
 ): Promise<CustomerInsightsData> {
   const sb = createAdminClient()
 
@@ -652,6 +653,18 @@ export async function fetchCustomerInsights(
   }
 
   console.log('[CI] customers fetched:', customers.length)
+
+  // ── Phone-only filter: narrow to customers with a valid phone number ─────────
+  if (phoneOnly) {
+    customers = customers.filter(c => c.phone && c.phone !== '' && c.phone !== '0')
+    // Also narrow brandCustomerIds so the VIP/dormant brand-scoped branch
+    // uses the correct reduced set.
+    if (brandCustomerIds) {
+      const phoneSet = new Set(customers.map(c => c.id))
+      brandCustomerIds = brandCustomerIds.filter(id => phoneSet.has(id))
+    }
+    console.log('[CI] after phone filter:', customers.length)
+  }
 
   // ── Orders in date range for new-vs-repeat trend — paginated ───────────────
   const ORD_PAGE = 100

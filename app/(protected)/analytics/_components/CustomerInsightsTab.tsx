@@ -57,6 +57,7 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo, selec
   const [isExporting,   setIsExporting]   = useState(false)
   const [exportingId,   setExportingId]   = useState<string | null>(null)
   const [hasPhoneOnly,  setHasPhoneOnly]  = useState(false)
+  const [phoneOnly,     setPhoneOnly]     = useState(false)
   const drillRef    = useRef<HTMLDivElement>(null)
   const phoneRef    = useRef<HTMLDivElement>(null)
   const queryClient = useQueryClient()
@@ -116,13 +117,13 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo, selec
   }
 
   const { data, isLoading } = useQuery({
-    queryKey: ['customer-insights', projectId, dateFrom, dateTo],
-    queryFn: () => fetchCustomerInsights(projectId, dateFrom, dateTo),
+    queryKey: ['customer-insights', projectId, dateFrom, dateTo, phoneOnly],
+    queryFn: () => fetchCustomerInsights(projectId, dateFrom, dateTo, phoneOnly),
   })
 
   // Drill-down customers query — fires when a KPI card is clicked
   const { data: drillCustomers = [], isLoading: drillLoading } = useQuery({
-    queryKey: ['customer-drill', drillFilter, selectedBrand],
+    queryKey: ['customer-drill', drillFilter, selectedBrand, phoneOnly],
     enabled: drillFilter !== 'all',
     queryFn: async () => {
       const sb = createClient()
@@ -130,6 +131,7 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo, selec
         .select('id, name, phone, customer_tag, total_spent, total_orders, last_order_date, first_order_date, preferred_brand, preferred_platform')
 
       if (selectedBrand) q = q.eq('preferred_brand', selectedBrand)
+      if (phoneOnly) q = q.not('phone', 'is', null).neq('phone', '').neq('phone', '0')
 
       if (drillFilter === 'new_month') {
         const monthStart = format(startOfMonth(new Date()), 'yyyy-MM-dd')
@@ -293,6 +295,21 @@ export default function CustomerInsightsTab({ projectId, dateFrom, dateTo, selec
             {missingPhoneCount > 0 && (
               <span className="text-xs text-amber-600 font-medium whitespace-nowrap">
                 ⚠️ {missingPhoneCount} missing phone
+              </span>
+            )}
+            <div className="h-5 w-px bg-border mx-1" />
+            <Button
+              type="button"
+              size="sm"
+              variant={phoneOnly ? 'default' : 'outline'}
+              onClick={() => setPhoneOnly(v => !v)}
+              className="h-8 gap-1.5"
+            >
+              📱 Phone Only
+            </Button>
+            {phoneOnly && missingPhoneCount > 0 && (
+              <span className="text-xs text-amber-600 font-medium whitespace-nowrap">
+                ⚠️ {missingPhoneCount} excluded (no phone)
               </span>
             )}
           </div>
