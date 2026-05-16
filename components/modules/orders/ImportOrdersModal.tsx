@@ -13,6 +13,7 @@ import {
   fetchImportMappings,
   saveImportMapping,
   generateOrderId,
+  dd2025BackfillCustomers,
 } from '@/app/actions/data'
 import { processOrdersBatch } from '@/app/actions/order-processing'
 import { useProjects } from '@/lib/hooks/useProjects'
@@ -937,6 +938,37 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
       }))
       const customerMap = await bulkUpsertCustomers(customerRows)
 
+      // ── DD2025 backfill: update existing orders that are missing customer_id ──
+      // For each valid row, try to find a previously-imported order matching
+      // (project_id + order_date + total_price + channel WHERE customer_id IS NULL)
+      // and write the resolved customer_id.  Rows that hit an existing order are
+      // skipped from the insert step below.
+      const backfilledIndices = new Set<number>()
+      let backfillUpdatedCount = 0
+      if (detectedFormat === 'DD2025') {
+        const backfillRows = validRows.map((r, _i) => {
+          const pid = r.projectId ?? selectedProjectId ?? dominantProjectId ?? ''
+          const customerKey = r.phone ? r.phone : `__noPhone__${r.customerName}`
+          return {
+            order_date:  r.date,
+            total_price: r.totalPrice,
+            channel:     r.channel,
+            project_id:  pid,
+            customer_id: customerMap[customerKey] ?? null,
+            fb_name:     r.customerName,
+          }
+        })
+        try {
+          const { updatedCount, matchedIndices } = await dd2025BackfillCustomers(backfillRows)
+          backfillUpdatedCount = updatedCount
+          for (const idx of matchedIndices) backfilledIndices.add(idx)
+          console.log(`[DD2025 backfill] updated ${updatedCount} existing orders, matched ${matchedIndices.length} rows`)
+        } catch (backfillErr) {
+          console.error('[DD2025 backfill] error:', backfillErr)
+          // non-fatal — fall through to normal insert
+        }
+      }
+
       const trackingNumbers = validRows.map(r => r.trackingNumber).filter((t): t is string => t !== null)
       const existingTrackingArr = trackingNumbers.length > 0
         ? await fetchExistingTrackingNumbers(trackingNumbers)
@@ -948,7 +980,7 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
       const resolvedTrackingNumbers = new Map<number, string>()
       for (let i = 0; i < validRows.length; i++) {
         const r = validRows[i]
-        if (r.needsAutoId) {
+        if (r.needsAutoId && !backfilledIndices.has(i)) {
           const pid = r.projectId ?? selectedProjectId ?? dominantProjectId
           if (pid) {
             try {
@@ -964,6 +996,11 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
       const toInsert: object[] = []
       for (let i = 0; i < validRows.length; i++) {
         const r = validRows[i]
+
+        // DD2025 rows that matched existing orders via backfill are already
+        // updated — skip inserting them again
+        if (backfilledIndices.has(i)) continue
+
         // Use pre-generated tracking if needed, else use the parsed one
         const trackingNumber = r.needsAutoId
           ? (resolvedTrackingNumbers.get(i) ?? r.trackingNumber)
@@ -1049,7 +1086,7 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
         .filter(o => o.import_status === 'warning').length
 
       setResult({
-        success: successCount - warningCount,
+        success: successCount - warningCount + backfillUpdatedCount,
         warnings: warningCount,
         skipped: skippedCount,
         errors: errorCount,

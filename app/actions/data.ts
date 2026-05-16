@@ -1373,6 +1373,69 @@ export async function savePnlSettings(projectId: string, settings: Partial<PnlSe
 
 export type DeliveryStatus = 'pending_delivery' | 'out_for_delivery' | 'delivered' | 'returned' | 'failed'
 
+// ─────────────────────────────────────────────────────────────────────────────
+// DD2025 Backfill: link customer_id on previously-imported orders
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * For each row, find existing orders matching (project_id + order_date +
+ * total_price + channel) where customer_id IS NULL, then set customer_id
+ * and fb_name.  Returns which row indices were matched (so the caller can
+ * skip inserting duplicates).
+ */
+export async function dd2025BackfillCustomers(
+  rows: Array<{
+    order_date: string
+    total_price: number
+    channel: string
+    project_id: string
+    customer_id: string | null
+    fb_name: string
+  }>
+): Promise<{ updatedCount: number; matchedIndices: number[] }> {
+  const sb = createAdminClient()
+  const matchedIndices: number[] = []
+  let updatedCount = 0
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]
+    if (!row.customer_id || !row.project_id) continue
+
+    // Build match query
+    let q = sb
+      .from('orders')
+      .select('id')
+      .eq('project_id', row.project_id)
+      .eq('order_date', row.order_date)
+      .eq('total_price', row.total_price)
+      .is('customer_id', null)
+      .limit(5)
+
+    // Match channel only when non-empty
+    if (row.channel) q = q.eq('channel', row.channel)
+
+    const { data: matches } = await q
+    if (!matches || matches.length === 0) continue
+
+    // Update all matched orders
+    for (const match of matches) {
+      const { error } = await sb
+        .from('orders')
+        .update({
+          customer_id: row.customer_id,
+          fb_name:     row.fb_name || null,
+        })
+        .eq('id', match.id)
+
+      if (!error) updatedCount++
+    }
+
+    matchedIndices.push(i)
+  }
+
+  return plain({ updatedCount, matchedIndices })
+}
+
 export async function updateCODDeliveryStatus(
   orderId: string,
   deliveryStatus: DeliveryStatus
