@@ -581,15 +581,22 @@ export async function fetchCustomerInsights(
       })
     }
 
-    // All-time first order date per customer — for "new in range" status
-    const { data: firstOrderRows } = await sb
-      .rpc('get_customer_first_orders', { p_project_id: projectId })
-    firstOrderMap = new Map<string, string>(
-      (firstOrderRows ?? []).map(
-        (r: { customer_id: string; first_order_date: string }) =>
-          [r.customer_id, r.first_order_date] as [string, string]
-      )
-    )
+    // All-time first order date per customer — for "new in range" status.
+    // Paginated in chunks of 1000 to avoid PostgREST max_rows truncation.
+    const FOD_PAGE = 1000
+    let fodOffset = 0
+    while (true) {
+      const { data: fodPage } = await sb
+        .rpc('get_customer_first_orders', { p_project_id: projectId })
+        .range(fodOffset, fodOffset + FOD_PAGE - 1)
+      if (!fodPage || fodPage.length === 0) break
+      for (const r of fodPage as Array<{ customer_id: string; first_order_date: string }>) {
+        firstOrderMap.set(r.customer_id, r.first_order_date)
+      }
+      if (fodPage.length < FOD_PAGE) break
+      fodOffset += FOD_PAGE
+    }
+    console.log('[CI] firstOrderMap size:', firstOrderMap.size)
 
     // Fetch customer profiles in batches of 100 to avoid URL length limits
     const CUST_BATCH = 100
