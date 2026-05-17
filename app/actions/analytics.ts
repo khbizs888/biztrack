@@ -777,15 +777,10 @@ export async function fetchCustomerInsights(
   // the selected date range. Using brand_first_order_date (all-time first order
   // for this project) ensures the count is always ≤ Total Customers.
   // For all-brands view, falls back to global first_order_date vs current month.
-  const newThisMonth = projectId
-    ? brandRpcRows.filter(r => {
-        const firstDate = firstOrderMap.get(r.id)
-        return firstDate != null && firstDate >= dateFrom && firstDate <= dateTo
-      }).length
-    : all.filter(c => {
-        const fod = c.first_order_date
-        return fod && fod >= dateFrom && fod <= dateTo
-      }).length
+  const newThisMonth = all.filter(c => {
+    const firstDate = firstOrderMap.get(c.id) ?? (c.first_order_date ?? undefined)
+    return firstDate != null && firstDate >= dateFrom && firstDate <= dateTo
+  }).length
 
   // Tag breakdown
   const tagMap: Record<string, number> = {}
