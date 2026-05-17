@@ -462,9 +462,9 @@ function parseRows(
       // Phone may be in scientific notation (e.g. 6.016874066e+10)
       let phone = phoneRaw.trim()
       if (phone.includes('e') || phone.includes('E')) {
-        phone = Math.round(Number(phone)).toString()
+        phone = Math.round(parseFloat(phone)).toString()
       } else {
-        phone = normalizePhone(phone, 'B')
+        phone = phone.replace(/[\s\-]/g, '')
       }
 
       const channel  = channelRaw.trim()
@@ -937,6 +937,10 @@ export default function ImportOrdersModal({ open, onClose }: Props) {
         address: r.address || null,
       }))
       const customerMap = await bulkUpsertCustomers(customerRows)
+      if (detectedFormat === 'DD2025') {
+        console.log('[DD2025] customerMap keys (first 5):', Object.keys(customerMap).slice(0, 5))
+        console.log('[DD2025] row lookup keys (first 5):', validRows.slice(0, 5).map(r => r.phone ? r.phone : `__noPhone__${r.customerName}`))
+      }
 
       // ── DD2025 backfill: update existing orders that are missing customer_id ──
       // Processed in batches of 100 (parallel within each batch) to avoid timeout.

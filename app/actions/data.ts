@@ -387,22 +387,35 @@ export async function bulkUpsertCustomers(rows: { name: string; phone: string; a
     const deduped = Object.values(
       Object.fromEntries(withPhone.map(r => [r.phone, r]))
     )
-    const { error } = await sb
+    const { data: upsertData, error: upsertError } = await sb
       .from('customers')
       .upsert(
         deduped.map(r => ({ name: r.name, phone: r.phone, address: r.address ?? null })),
         { onConflict: 'phone' }
       )
-    if (error) throw new Error(error.message)
+      .select('id')
+    console.log('[bulkUpsert] upsert error:', upsertError?.message ?? null)
+    console.log('[bulkUpsert] upsert returned rows:', upsertData?.length ?? 0)
+    if (upsertError) throw new Error(upsertError.message)
 
     // Fetch IDs in a separate SELECT — upsert with a partial unique index can
     // return incomplete data (rows that hit the conflict path may be omitted).
+    // Chunk into 500 to avoid PostgREST URL length limits.
     const phones = deduped.map(r => r.phone)
-    const { data: fetched } = await sb
-      .from('customers')
-      .select('id, phone')
-      .in('phone', phones)
-    fetched?.forEach(c => { if (c.phone) map[c.phone] = c.id })
+    console.log('[bulkUpsert] sample phones:', phones.slice(0, 3))
+    const chunkSize = 500
+    const allFetched: { id: string; phone: string }[] = []
+    for (let i = 0; i < phones.length; i += chunkSize) {
+      const chunk = phones.slice(i, i + chunkSize)
+      const { data, error: selectError } = await sb
+        .from('customers')
+        .select('id, phone')
+        .in('phone', chunk)
+      console.log('[bulkUpsert] select chunk', i, '–', i + chunk.length - 1, 'returned:', data?.length ?? 0, 'error:', selectError?.message ?? null)
+      if (data) allFetched.push(...data)
+    }
+    allFetched.forEach(c => { if (c.phone) map[c.phone] = c.id })
+    console.log('[bulkUpsert] phones in:', withPhone.length, 'customers out:', Object.keys(map).length)
   }
 
   // ── Customers without phone: find by name, else insert ───────────────────
@@ -1401,18 +1414,29 @@ export async function dd2025BackfillCustomers(
 ): Promise<{ updatedCount: number; linkedIndices: number[]; existingIndices: number[] }> {
   if (rows.length > 100) throw new Error('dd2025BackfillCustomers: max 100 rows per call')
 
+  const rowsWithPhone = rows.filter(r => r.customer_id !== null).length
+  console.log('[DD2025 backfill] total rows received:', rows.length)
+  console.log('[DD2025 backfill] rows with valid customer_id (phone-linked):', rowsWithPhone)
+
   const sb = createAdminClient()
   let updatedCount = 0
 
   type RowResult = { i: number; linked: boolean } | null
 
+  let firstRowLogged = false
+
   const results = await Promise.all(
     rows.map(async (row, i): Promise<RowResult> => {
       if (!row.project_id) return null
 
+      if (!firstRowLogged) {
+        firstRowLogged = true
+        console.log('[DD2025 backfill] first row fields — date:', row.order_date, '| price:', row.total_price, '(type:', typeof row.total_price, ') | channel:', row.channel, '| customer_id:', row.customer_id)
+      }
+
       let existQ = sb
         .from('orders')
-        .select('id, customer_id')
+        .select('id, customer_id, order_date, total_price, channel')
         .eq('project_id', row.project_id)
         .eq('order_date', row.order_date)
         .eq('total_price', row.total_price)
@@ -1421,6 +1445,11 @@ export async function dd2025BackfillCustomers(
 
       const { data: existingOrders } = await existQ
       if (!existingOrders || existingOrders.length === 0) return null  // truly new row — allow insert
+
+      if (i === rows.findIndex(r => r.project_id)) {
+        const first = existingOrders[0] as Record<string, unknown>
+        console.log('[DD2025 backfill] first matched DB order — order_date:', first.order_date, '| total_price:', first.total_price, '(type:', typeof first.total_price, ') | channel:', first.channel, '| customer_id:', first.customer_id)
+      }
 
       // Some orders already have customer_id set (fully linked)
       const alreadyLinked = existingOrders.some(o => o.customer_id !== null)
@@ -1432,14 +1461,18 @@ export async function dd2025BackfillCustomers(
         if (unlinked.length > 0) {
           await Promise.all(
             unlinked.map(async o => {
-              const { error } = await sb
+              const { data: updateData, error: updateError } = await sb
                 .from('orders')
                 .update({ customer_id: row.customer_id, fb_name: row.fb_name || null })
                 .eq('id', o.id)
-              if (!error) { updatedCount++; didUpdate = true }
+                .select('id, customer_id')
+              console.log('[DD2025 backfill] UPDATE id:', o.id, '| returned rows:', updateData?.length ?? 0, '| error:', updateError?.message ?? null)
+              if (!updateError) { updatedCount++; didUpdate = true }
             })
           )
         }
+      } else {
+        if (i < 3) console.log('[DD2025 backfill] row', i, 'skipped update — customer_id is null/undefined, alreadyLinked:', alreadyLinked)
       }
 
       // linked = we successfully set (or confirmed) customer_id on these orders
@@ -1456,6 +1489,10 @@ export async function dd2025BackfillCustomers(
     if (r.linked) linkedIndices.push(r.i)
     else existingIndices.push(r.i)
   }
+
+  const foundInDb = linkedIndices.length + existingIndices.length
+  console.log('[DD2025 backfill] orders found in DB:', foundInDb)
+  console.log('[DD2025 backfill] orders updated with customer_id:', updatedCount)
 
   return plain({ updatedCount, linkedIndices, existingIndices })
 }
