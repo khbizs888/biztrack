@@ -178,6 +178,37 @@ export async function updateCustomerAddress(
   if (error) throw new Error('Failed to update customer address: ' + error.message)
 }
 
+// ─── Get customer + last purchase reason by phone + project ──────────────────
+
+export async function getCustomerByPhone(
+  phone: string,
+  projectId: string,
+): Promise<{ customerId: string; purchaseReason: string } | null> {
+  const supabase = createAdminClient()
+
+  const { data: customer } = await supabase
+    .from('customers')
+    .select('id')
+    .eq('phone', phone)
+    .maybeSingle()
+
+  if (!customer) return null
+
+  const { data: order } = await supabase
+    .from('orders')
+    .select('purchase_reason')
+    .eq('customer_id', customer.id)
+    .eq('project_id', projectId)
+    .not('purchase_reason', 'is', null)
+    .order('order_date', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (!order?.purchase_reason) return null
+
+  return { customerId: customer.id, purchaseReason: order.purchase_reason }
+}
+
 // ─── Remove customer receipt ──────────────────────────────────────────────────
 
 export async function removeCustomerReceipt(

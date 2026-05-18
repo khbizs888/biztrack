@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQueryClient } from '@tanstack/react-query'
@@ -8,6 +8,7 @@ import { orderSchema, type OrderFormData } from '@/lib/validations'
 import {
   fetchCustomerByPhone, upsertCustomer, createOrder, generateOrderId,
 } from '@/app/actions/data'
+import { getCustomerByPhone } from '@/app/actions/customers'
 import { useProjects, type Package } from '@/lib/hooks/useProjects'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -73,6 +74,8 @@ export default function AddOrderModal({ open, onClose }: Props) {
   const [newRepeatAutoFilled, setNewRepeatAutoFilled] = useState(false)
   const [paymentMethod1, setPaymentMethod1] = useState('')
   const [paymentMethod2, setPaymentMethod2] = useState('')
+  const [purchaseReasonAutoFilled, setPurchaseReasonAutoFilled] = useState(false)
+  const phoneDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const today = new Date().toISOString().split('T')[0]
 
@@ -113,6 +116,21 @@ export default function AddOrderModal({ open, onClose }: Props) {
       setAutoFilled(new Set())
       setNewRepeatAutoFilled(false)
     }
+
+    // Auto-fill purchase reason for returning customers in the selected brand
+    const projectId = watch('project_id')
+    if (projectId && phone.length >= 8) {
+      const normalizedPhone = phone.replace(/[\s\-\(\)\+]/g, '')
+      const result = await getCustomerByPhone(normalizedPhone, projectId)
+      if (result?.purchaseReason) {
+        const currentReason = watch('purchase_reason')
+        if (!currentReason) {
+          setValue('purchase_reason', result.purchaseReason)
+          setPurchaseReasonAutoFilled(true)
+        }
+      }
+    }
+
     setLookingUp(false)
   }
 
@@ -190,6 +208,7 @@ export default function AddOrderModal({ open, onClose }: Props) {
     setNewRepeatAutoFilled(false)
     setPaymentMethod1('')
     setPaymentMethod2('')
+    setPurchaseReasonAutoFilled(false)
     onClose()
   }
 
@@ -277,7 +296,10 @@ export default function AddOrderModal({ open, onClose }: Props) {
                     setFoundCustomerName(null)
                     setNewRepeatAutoFilled(false)
                     setAutoFilled(new Set())
+                    setPurchaseReasonAutoFilled(false)
                   }
+                  if (phoneDebounceRef.current) clearTimeout(phoneDebounceRef.current)
+                  phoneDebounceRef.current = setTimeout(lookupPhone, 600)
                 },
               })}
               onBlur={lookupPhone}
@@ -414,7 +436,7 @@ export default function AddOrderModal({ open, onClose }: Props) {
               <Controller name="purchase_reason" control={control} render={({ field }) => (
                 <select
                   value={field.value ?? ''}
-                  onChange={e => field.onChange(e.target.value)}
+                  onChange={e => { field.onChange(e.target.value); setPurchaseReasonAutoFilled(false) }}
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring h-9"
                 >
                   <option value="">Select reason...</option>
@@ -423,11 +445,16 @@ export default function AddOrderModal({ open, onClose }: Props) {
               )} />
             ) : (
               <textarea
-                {...register('purchase_reason')}
+                {...register('purchase_reason', {
+                  onChange: () => setPurchaseReasonAutoFilled(false),
+                })}
                 rows={2}
                 placeholder="Optional remark…"
                 className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-ring"
               />
+            )}
+            {purchaseReasonAutoFilled && (
+              <p className="text-xs text-muted-foreground">Auto-filled from last order · edit if needed</p>
             )}
           </div>
 
