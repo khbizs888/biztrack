@@ -46,7 +46,21 @@ const PURCHASE_REASONS: Record<string, string[]> = {
   ],
 }
 
+const ALLOWED = ['image/jpeg', 'image/png', 'image/webp']
+
 interface Props { order: Order | null; onClose: () => void }
+
+interface ReceiptSlot {
+  url: string | null
+  filePath: string | null
+  uploading: boolean
+  error: string
+  removed: boolean
+}
+
+function emptySlot(url: string | null = null): ReceiptSlot {
+  return { url, filePath: null, uploading: false, error: '', removed: false }
+}
 
 export default function EditOrderModal({ order, onClose }: Props) {
   const queryClient = useQueryClient()
@@ -69,14 +83,14 @@ export default function EditOrderModal({ order, onClose }: Props) {
   const [paymentMethod2, setPaymentMethod2] = useState('')
   const [customChannel, setCustomChannel] = useState(false)
 
-  // Receipt state
+  // Receipt 1 — existing customer receipt_url logic
   const [originalReceiptUrl, setOriginalReceiptUrl] = useState<string | null>(null)
-  const [receiptUrl, setReceiptUrl] = useState<string | null>(null)
-  const [receiptFilePath, setReceiptFilePath] = useState<string | null>(null)
-  const [receiptRemoved, setReceiptRemoved] = useState(false)
-  const [uploading, setUploading] = useState(false)
-  const [uploadError, setUploadError] = useState('')
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [receipt1, setReceipt1] = useState<ReceiptSlot>(emptySlot())
+  const fileRef1 = useRef<HTMLInputElement>(null)
+
+  // Receipt 2 — stored in orders.receipt_url_2
+  const [receipt2, setReceipt2] = useState<ReceiptSlot>(emptySlot())
+  const fileRef2 = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (!order) return
@@ -96,13 +110,13 @@ export default function EditOrderModal({ order, onClose }: Props) {
     setRemark((order as any).remark ?? '')
     setPaymentMethod1((order as any).payment_method_1 ?? '')
     setPaymentMethod2((order as any).payment_method_2 ?? '')
-    const existing = (order.customers as any)?.receipt_url ?? null
-    setOriginalReceiptUrl(existing)
-    setReceiptUrl(existing)
-    setReceiptFilePath(null)
-    setReceiptRemoved(false)
-    setUploading(false)
-    setUploadError('')
+
+    const existing1 = (order.customers as any)?.receipt_url ?? null
+    setOriginalReceiptUrl(existing1)
+    setReceipt1(emptySlot(existing1))
+
+    const existing2 = (order as any).receipt_url_2 ?? null
+    setReceipt2(emptySlot(existing2))
   }, [order])
 
   const projectPackages: Package[] = projects.find(p => p.id === projectId)?.packages ?? []
@@ -110,27 +124,26 @@ export default function EditOrderModal({ order, onClose }: Props) {
   const isReceiptBrand = RECEIPT_BRANDS.includes(selectedProject?.name ?? '')
   const brandReasons = selectedProject ? PURCHASE_REASONS[selectedProject.name] : undefined
 
-  async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    if (fileInputRef.current) fileInputRef.current.value = ''
-
-    const ALLOWED = ['image/jpeg', 'image/png', 'image/webp']
+  async function uploadFile(
+    file: File,
+    slot: ReceiptSlot,
+    setSlot: React.Dispatch<React.SetStateAction<ReceiptSlot>>,
+    fileRef: React.RefObject<HTMLInputElement>,
+  ) {
     if (!ALLOWED.includes(file.type)) {
-      setUploadError('Only JPG, PNG, WEBP images are allowed')
+      setSlot(s => ({ ...s, error: 'Only JPG, PNG, WEBP allowed' }))
       return
     }
     if (file.size > 5 * 1024 * 1024) {
-      setUploadError('File must be under 5MB')
+      setSlot(s => ({ ...s, error: 'File must be under 5MB' }))
       return
     }
+    if (fileRef.current) fileRef.current.value = ''
 
-    setUploading(true)
-    setUploadError('')
+    setSlot(s => ({ ...s, uploading: true, error: '' }))
 
-    if (receiptFilePath) {
-      createClient().storage.from('receipts').remove([receiptFilePath]).catch(() => {})
-      setReceiptFilePath(null)
+    if (slot.filePath) {
+      createClient().storage.from('receipts').remove([slot.filePath]).catch(() => {})
     }
 
     const timestamp = Date.now()
@@ -145,31 +158,27 @@ export default function EditOrderModal({ order, onClose }: Props) {
       })
       if (error) throw error
       const { data: { publicUrl } } = supabase.storage.from('receipts').getPublicUrl(path)
-      setReceiptUrl(publicUrl)
-      setReceiptFilePath(path)
-      setReceiptRemoved(false)
+      setSlot({ url: publicUrl, filePath: path, uploading: false, error: '', removed: false })
     } catch (err: any) {
-      console.error('[EditOrderModal] receipt upload error:', err)
-      setUploadError(err?.message ?? 'Upload failed, try again')
-    } finally {
-      setUploading(false)
+      setSlot(s => ({ ...s, uploading: false, error: err?.message ?? 'Upload failed' }))
     }
   }
 
-  function handleRemoveReceipt() {
-    if (receiptFilePath) {
-      createClient().storage.from('receipts').remove([receiptFilePath]).catch(() => {})
-      setReceiptFilePath(null)
+  function handleRemoveReceipt(
+    slot: ReceiptSlot,
+    setSlot: React.Dispatch<React.SetStateAction<ReceiptSlot>>,
+    fileRef: React.RefObject<HTMLInputElement>,
+  ) {
+    if (slot.filePath) {
+      createClient().storage.from('receipts').remove([slot.filePath]).catch(() => {})
     }
-    setReceiptUrl(null)
-    setReceiptRemoved(true)
-    setUploadError('')
+    setSlot(s => ({ ...s, url: null, filePath: null, removed: true, error: '' }))
+    if (fileRef.current) fileRef.current.value = ''
   }
 
   function handleCancelClose() {
-    if (receiptFilePath) {
-      createClient().storage.from('receipts').remove([receiptFilePath]).catch(() => {})
-    }
+    if (receipt1.filePath) createClient().storage.from('receipts').remove([receipt1.filePath]).catch(() => {})
+    if (receipt2.filePath) createClient().storage.from('receipts').remove([receipt2.filePath]).catch(() => {})
     onClose()
   }
 
@@ -198,6 +207,7 @@ export default function EditOrderModal({ order, onClose }: Props) {
         payment_method_1: paymentMethod1 || null,
         payment_method_2: paymentMethod2 || null,
         is_new_customer: isNewCustomer,
+        receipt_url_2: receipt2.removed ? null : (receipt2.url ?? undefined),
       })
 
       const customerId = order.customer_id
@@ -218,10 +228,10 @@ export default function EditOrderModal({ order, onClose }: Props) {
         }
 
         if (isReceiptBrand) {
-          if (receiptUrl && receiptUrl !== originalReceiptUrl) {
-            try { await setCustomerReceiptUrl(customerId, receiptUrl) } catch { /* best-effort */ }
-            setReceiptFilePath(null)
-          } else if (receiptRemoved && originalReceiptUrl) {
+          if (receipt1.url && receipt1.url !== originalReceiptUrl) {
+            try { await setCustomerReceiptUrl(customerId, receipt1.url) } catch { /* best-effort */ }
+            setReceipt1(s => ({ ...s, filePath: null }))
+          } else if (receipt1.removed && originalReceiptUrl) {
             try { await removeCustomerReceipt(customerId, '') } catch { /* best-effort */ }
           }
         }
@@ -236,6 +246,85 @@ export default function EditOrderModal({ order, onClose }: Props) {
     } finally {
       setLoading(false)
     }
+  }
+
+  function ReceiptUpload({
+    label,
+    slot,
+    setSlot,
+    fileRef,
+    originalUrl,
+  }: {
+    label: string
+    slot: ReceiptSlot
+    setSlot: React.Dispatch<React.SetStateAction<ReceiptSlot>>
+    fileRef: React.RefObject<HTMLInputElement>
+    originalUrl?: string | null
+  }) {
+    return (
+      <div className="space-y-1">
+        <Label className="text-xs">{label}</Label>
+        {slot.url ? (
+          <div className="space-y-2">
+            <img src={slot.url} alt={label} className="h-20 rounded border object-cover" />
+            <div className="flex gap-2">
+              <label className={cn('cursor-pointer text-xs text-muted-foreground underline', slot.uploading && 'opacity-50 pointer-events-none')}>
+                {slot.uploading ? 'Uploading…' : 'Replace'}
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  className="sr-only"
+                  onChange={e => {
+                    const file = e.target.files?.[0]
+                    if (file) uploadFile(file, slot, setSlot, fileRef)
+                  }}
+                />
+              </label>
+              <button type="button" onClick={() => handleRemoveReceipt(slot, setSlot, fileRef)} className="text-xs text-destructive underline">Remove</button>
+            </div>
+          </div>
+        ) : (
+          <label className={cn(
+            'flex flex-col items-center justify-center gap-1 border border-dashed rounded-md p-3 cursor-pointer',
+            'text-xs text-muted-foreground hover:border-primary/50 transition-colors',
+            slot.uploading && 'opacity-60 pointer-events-none',
+          )}>
+            {slot.uploading ? (
+              <span className="flex items-center gap-1.5">
+                <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                </svg>
+                Uploading…
+              </span>
+            ) : (
+              <>
+                <span>Click to upload</span>
+                <span className="text-[10px]">JPG, PNG, WEBP · max 5MB</span>
+              </>
+            )}
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              className="sr-only"
+              onChange={e => {
+                const file = e.target.files?.[0]
+                if (file) uploadFile(file, slot, setSlot, fileRef)
+              }}
+            />
+          </label>
+        )}
+        {slot.error && <p className="text-xs text-destructive">{slot.error}</p>}
+        {slot.removed && !slot.url && originalUrl && (
+          <p className="text-xs text-muted-foreground">
+            Will be removed on save.{' '}
+            <button type="button" className="underline" onClick={() => setSlot(emptySlot(originalUrl))}>Undo</button>
+          </p>
+        )}
+      </div>
+    )
   }
 
   return (
@@ -417,68 +506,36 @@ export default function EditOrderModal({ order, onClose }: Props) {
             />
           </div>
 
-          {/* Receipt Image (NE / DD / Juji only) */}
+          {/* Dual Receipt Upload */}
           {isReceiptBrand && (
-            <div className="space-y-1">
-              <Label className="text-xs">Receipt Image</Label>
-              {receiptUrl ? (
-                <div className="space-y-2">
-                  <img src={receiptUrl} alt="Receipt" className="h-20 rounded border object-cover" />
-                  <div className="flex gap-2">
-                    <label className={cn('cursor-pointer text-xs text-muted-foreground underline', uploading && 'opacity-50 pointer-events-none')}>
-                      {uploading ? 'Uploading…' : 'Replace'}
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept="image/jpeg,image/png,image/webp"
-                        className="sr-only"
-                        onChange={handleFileSelect}
-                      />
-                    </label>
-                    <button type="button" onClick={handleRemoveReceipt} className="text-xs text-destructive underline">Remove</button>
-                  </div>
-                </div>
-              ) : (
-                <label
-                  className={cn(
-                    'flex flex-col items-center justify-center gap-1 border border-dashed rounded-md p-3 cursor-pointer',
-                    'text-xs text-muted-foreground hover:border-primary/50 transition-colors',
-                    uploading && 'opacity-60 pointer-events-none',
-                  )}
-                >
-                  {uploading ? (
-                    <span className="flex items-center gap-1.5">
-                      <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                      </svg>
-                      Uploading…
-                    </span>
-                  ) : (
-                    <>
-                      <span>Click to upload receipt</span>
-                      <span className="text-[10px]">JPG, PNG, WEBP · max 5MB</span>
-                    </>
-                  )}
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp"
-                    className="sr-only"
-                    onChange={handleFileSelect}
-                  />
-                </label>
-              )}
-              {uploadError && <p className="text-xs text-destructive">{uploadError}</p>}
-              {receiptRemoved && !receiptUrl && (
-                <p className="text-xs text-muted-foreground">Receipt will be removed on save. <button type="button" className="underline" onClick={() => { setReceiptUrl(originalReceiptUrl); setReceiptRemoved(false) }}>Undo</button></p>
-              )}
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Receipts</p>
+              <div className="grid grid-cols-2 gap-3">
+                <ReceiptUpload
+                  label="Receipt 1"
+                  slot={receipt1}
+                  setSlot={setReceipt1}
+                  fileRef={fileRef1}
+                  originalUrl={originalReceiptUrl}
+                />
+                <ReceiptUpload
+                  label="Receipt 2"
+                  slot={receipt2}
+                  setSlot={setReceipt2}
+                  fileRef={fileRef2}
+                />
+              </div>
             </div>
           )}
 
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" onClick={handleCancelClose}>Cancel</Button>
-            <Button onClick={handleSave} disabled={loading}>{loading ? 'Saving…' : 'Save Changes'}</Button>
+            <Button
+              onClick={handleSave}
+              disabled={loading || receipt1.uploading || receipt2.uploading}
+            >
+              {loading ? 'Saving…' : 'Save Changes'}
+            </Button>
           </div>
         </div>
       </DialogContent>

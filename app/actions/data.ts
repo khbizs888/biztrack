@@ -848,6 +848,7 @@ export async function updateOrder(id: string, payload: {
   payment_method_1?: string | null
   payment_method_2?: string | null
   is_new_customer?: boolean | null
+  receipt_url_2?: string | null
 }) {
   const sb = createAdminClient()
   const updates: Record<string, unknown> = { ...payload }
