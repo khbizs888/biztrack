@@ -711,12 +711,12 @@ export async function fetchCustomerInsights(
 
   // ── Orders in date range for new-vs-repeat trend — paginated ───────────────
   const ORD_PAGE = 100
-  const orders: Array<{ order_date: string; is_new_customer: boolean | null }> = []
+  const orders: Array<{ order_date: string; is_new_customer: boolean | null; customer_id: string | null; total_price: number | null }> = []
   let ordPage = 0
   while (true) {
     let q = sb
       .from('orders')
-      .select('order_date, is_new_customer')
+      .select('order_date, is_new_customer, customer_id, total_price')
       .gte('order_date', dateFrom)
       .lte('order_date', dateTo)
       .neq('status', 'cancelled')
@@ -822,10 +822,12 @@ export async function fetchCustomerInsights(
     ? singleOrderCustomers.reduce((s, c) => s + Number(c.total_spent ?? 0), 0) / singleOrderCustomers.length
     : 0
 
-  // ── Repeat Customer AOV: avg (total_spent / total_orders) for 2+ orders ──────
-  const repeatCustomers = all.filter(c => (c.total_orders ?? 0) >= 2)
-  const repeatCustomerAov = repeatCustomers.length > 0
-    ? repeatCustomers.reduce((s, c) => s + safeDivide(Number(c.total_spent ?? 0), c.total_orders ?? 1), 0) / repeatCustomers.length
+  // ── Repeat Customer AOV: revenue from repeat customers in period ÷ their order count
+  // Repeat customer = has 2+ all-time orders (from customers table, same as repeatCount above)
+  const repeatCustomerIdSet = new Set(all.filter(c => (c.total_orders ?? 0) >= 2).map(c => c.id))
+  const repeatPeriodOrders = orders.filter(o => o.customer_id && repeatCustomerIdSet.has(o.customer_id))
+  const repeatCustomerAov = repeatPeriodOrders.length > 0
+    ? repeatPeriodOrders.reduce((s, o) => s + Number(o.total_price ?? 0), 0) / repeatPeriodOrders.length
     : 0
 
   // ── Customer LTV: average total_spent across all customers ───────────────────
